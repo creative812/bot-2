@@ -13,3 +13,7 @@ node_modules/
 # Optional: build folders
 /dist
 /build
+
+# Bot-specific files
+database.sqlite
+data/bot.db
