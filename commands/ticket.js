@@ -1,285 +1,226 @@
-const { 
-    SlashCommandBuilder, 
-    EmbedBuilder, 
-    ActionRowBuilder, 
-    ButtonBuilder, 
-    ButtonStyle, 
-    ChannelType, 
-    PermissionFlagsBits,
-    StringSelectMenuBuilder,
-    StringSelectMenuOptionBuilder
+const {
+  SlashCommandBuilder,
+  PermissionFlagsBits,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  ChannelType,
+  PermissionsBitField
 } = require('discord.js');
 
-module.exports = {
-    commands: [
-        {
-            data: new SlashCommandBuilder()
-                .setName('ticket-setup')
-                .setDescription('Setup the ticket system for your server')
-                .addChannelOption(option =>
-                    option.setName('category')
-                        .setDescription('Category where ticket channels will be created')
-                        .addChannelTypes(ChannelType.GuildCategory)
-                        .setRequired(true))
-                .addChannelOption(option =>
-                    option.setName('log-channel')
-                        .setDescription('Channel where ticket logs will be sent')
-                        .addChannelTypes(ChannelType.GuildText)
-                        .setRequired(true))
-                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-            name: 'ticket-setup',
-            execute: async (interaction, client) => {
-                try {
-                    const category = interaction.options.getChannel('category');
-                    const logChannel = interaction.options.getChannel('log-channel');
-                    const guildId = interaction.guild.id;
+/**
+ * Ticket Commands – refined permissions and button IDs
+ */
 
-                    // Save ticket settings to database
-                    client.db.setTicketSettings(guildId, {
-                        categoryId: category.id,
-                        logChannelId: logChannel.id,
-                        staffRoleIds: [],
-                        nextTicketNumber: 1
-                    });
+const TICKET_LOCK = new Set();
+const RATE_LIMIT_MS = 5 * 60 * 1000; // 5 minutes
 
-                    const embed = new EmbedBuilder()
-                        .setTitle('✅ Ticket System Setup Complete')
-                        .setDescription(`**Ticket Category:** ${category}\n**Log Channel:** ${logChannel}`)
-                        .setColor('#00FF00')
-                        .setTimestamp();
+const commands = [
+  {
+    name: 'ticket',
+    description: 'Manage support tickets',
+    permissions: 'user',
+    data: new SlashCommandBuilder()
+      .setName('ticket')
+      .setDescription('Manage support tickets')
+      .addSubcommand(sub => sub.setName('setup').setDescription('Initialize ticket system'))
+      .addSubcommand(sub => sub.setName('create').setDescription('Create a new support ticket'))
+      .addSubcommand(sub => sub.setName('claim').setDescription('Claim a ticket'))
+      .addSubcommand(sub => sub.setName('close').setDescription('Close a ticket')),
+    async execute(interaction, client) {
+      const sub = interaction.options.getSubcommand();
+      await interaction.deferReply({ ephemeral: sub !== 'create' });
 
-                    await interaction.reply({ embeds: [embed], ephemeral: true });
-
-                } catch (error) {
-                    console.error('Error in ticket setup:', error);
-                    client.logger.error('Error in ticket setup:', error);
-
-                    if (!interaction.replied) {
-                        await interaction.reply({ 
-                            content: '❌ Failed to setup ticket system. Please try again.', 
-                            ephemeral: true 
-                        });
-                    }
-                }
-            }
-        },
-        {
-            data: new SlashCommandBuilder()
-                .setName('ticket-panel')
-                .setDescription('Create a ticket panel with customizable message and staff roles')
-                .addStringOption(option =>
-                    option.setName('title')
-                        .setDescription('Title for the ticket panel')
-                        .setRequired(false))
-                .addStringOption(option =>
-                    option.setName('description')
-                        .setDescription('Description for the ticket panel')
-                        .setRequired(false))
-                .addStringOption(option =>
-                    option.setName('button-text')
-                        .setDescription('Text for the create ticket button')
-                        .setRequired(false))
-                .setDefaultMemberPermissions(PermissionFlagsBits.Administrator),
-            name: 'ticket-panel',
-            execute: async (interaction, client) => {
-                try {
-                    const guildId = interaction.guild.id;
-
-                    // Check if ticket system is setup
-                    let settings = client.db.getTicketSettings(guildId);
-
-                    if (!settings || !settings.category_id) {
-                        return await interaction.reply({
-                            content: '❌ Please setup the ticket system first using `/ticket-setup`',
-                            ephemeral: true
-                        });
-                    }
-
-                    // Get all roles in the server (excluding @everyone and bot roles)
-                    const roles = interaction.guild.roles.cache
-                        .filter(role => role.id !== interaction.guild.id && !role.managed && role.name !== '@everyone')
-                        .sort((a, b) => b.position - a.position)
-                        .first(25); // Discord limit for select menu options
-
-                    if (roles.length === 0) {
-                        return await interaction.reply({
-                            content: '❌ No suitable roles found in this server.',
-                            ephemeral: true
-                        });
-                    }
-
-                    // Create select menu options properly
-                    const selectOptions = roles.map(role => 
-                        new StringSelectMenuOptionBuilder()
-                            .setLabel(role.name.substring(0, 100)) // Ensure label isn't too long
-                            .setValue(role.id)
-                            .setDescription(`Members: ${role.members.size}`.substring(0, 100))
-                    );
-
-                    const selectMenu = new StringSelectMenuBuilder()
-                        .setCustomId('ticket_staff_roles')
-                        .setPlaceholder('Select staff roles for tickets')
-                        .setMinValues(1)
-                        .setMaxValues(Math.min(roles.length, 10))
-                        .addOptions(selectOptions);
-
-                    const row = new ActionRowBuilder().addComponents(selectMenu);
-
-                    // Store panel data temporarily with expiration
-                    const panelData = {
-                        title: interaction.options.getString('title') || '🎫 Support Tickets',
-                        description: interaction.options.getString('description') || 
-                            'Click the button below to create a support ticket. Our staff will assist you shortly!',
-                        buttonText: interaction.options.getString('button-text') || '🎫 Create Ticket',
-                        guildId: guildId,
-                        userId: interaction.user.id,
-                        timestamp: Date.now()
-                    };
-
-                    // Initialize map if it doesn't exist
-                    if (!client.tempPanelData) client.tempPanelData = new Map();
-
-                    // Store with a unique key
-                    const storageKey = `${interaction.user.id}_${guildId}`;
-                    client.tempPanelData.set(storageKey, panelData);
-
-                    // Clean up old data (older than 5 minutes)
-                    const fiveMinutesAgo = Date.now() - (5 * 60 * 1000);
-                    for (const [key, data] of client.tempPanelData.entries()) {
-                        if (data.timestamp < fiveMinutesAgo) {
-                            client.tempPanelData.delete(key);
-                        }
-                    }
-
-                    await interaction.reply({
-                        content: '👥 **Step 1:** Select the staff roles that should have access to tickets:',
-                        components: [row],
-                        ephemeral: true
-                    });
-
-                } catch (error) {
-                    console.error('Error in ticket panel command:', error);
-                    client.logger.error('Error in ticket panel:', error);
-
-                    if (!interaction.replied) {
-                        await interaction.reply({
-                            content: '❌ Failed to create ticket panel. Please try again.',
-                            ephemeral: true
-                        });
-                    }
-                }
-            }
-        },
-        {
-            data: new SlashCommandBuilder()
-                .setName('ticket-close')
-                .setDescription('Close the current ticket')
-                .addStringOption(option =>
-                    option.setName('reason')
-                        .setDescription('Reason for closing the ticket')
-                        .setRequired(false))
-                .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages),
-            name: 'ticket-close',
-            execute: async (interaction, client) => {
-                try {
-                    const channelId = interaction.channel.id;
-
-                    // IMPROVED: Try multiple methods to find ticket
-                    let ticket = null;
-
-                    // Method 1: Direct lookup by channel and status
-                    ticket = client.db.getTicketByChannel(channelId);
-
-                    // Method 2: Search all open tickets if direct lookup fails
-                    if (!ticket) {
-                        const allTickets = client.db.getOpenTickets(interaction.guild.id);
-                        ticket = allTickets.find(t => t.channel_id === channelId);
-                    }
-
-                    // Method 3: Search by any status if still not found
-                    if (!ticket) {
-                        const stmt = client.db.db.prepare("SELECT * FROM tickets WHERE channel_id = ?");
-                        ticket = stmt.get(channelId);
-                    }
-
-                    if (!ticket) {
-                        return await interaction.reply({
-                            content: '❌ This command can only be used in ticket channels.',
-                            ephemeral: true
-                        });
-                    }
-
-                    // Defer reply to prevent timeout
-                    await interaction.deferReply();
-
-                    const reason = interaction.options.getString('reason') || 'No reason provided';
-
-                    // Create closing confirmation embed
-                    const embed = new EmbedBuilder()
-                        .setTitle('🔒 Ticket Closing')
-                        .setDescription(`**Ticket:** #${ticket.ticket_number}\n**Closed by:** ${interaction.user}\n**Reason:** ${reason}\n\n⏰ This channel will be deleted in 10 seconds...`)
-                        .setColor('#FF0000')
-                        .setTimestamp();
-
-                    // Close ticket in database
-                    client.db.closeTicket(ticket.id, interaction.user.id);
-
-                    // Log to log channel
-                    const settings = client.db.getTicketSettings(interaction.guild.id);
-                    if (settings && settings.log_channel_id) {
-                        const logChannel = interaction.guild.channels.cache.get(settings.log_channel_id);
-                        if (logChannel) {
-                            const logEmbed = new EmbedBuilder()
-                                .setTitle('🔒 Ticket Closed')
-                                .addFields(
-                                    { name: 'Ticket Number', value: `#${ticket.ticket_number}`, inline: true },
-                                    { name: 'Created by', value: `<@${ticket.user_id}>`, inline: true },
-                                    { name: 'Closed by', value: `${interaction.user}`, inline: true },
-                                    { name: 'Reason', value: reason, inline: false },
-                                    { name: 'Channel', value: `#${interaction.channel.name}`, inline: true }
-                                )
-                                .setColor('#FF0000')
-                                .setTimestamp();
-
-                            await logChannel.send({ embeds: [logEmbed] }).catch(console.error);
-                        }
-                    }
-
-                    // Edit the deferred reply
-                    await interaction.editReply({ embeds: [embed] });
-
-                    // Delete channel after 10 seconds
-                    setTimeout(async () => {
-                        try {
-                            if (interaction.channel && !interaction.channel.deleted) {
-                                await interaction.channel.delete('Ticket closed');
-                            }
-                        } catch (error) {
-                            console.error('Error deleting ticket channel:', error);
-                            client.logger.error('Error deleting ticket channel:', error);
-                        }
-                    }, 10000);
-
-                } catch (error) {
-                    console.error('Error closing ticket:', error);
-                    client.logger.error('Error closing ticket:', error);
-
-                    try {
-                        if (interaction.deferred) {
-                            await interaction.editReply({
-                                content: '❌ Failed to close ticket. Please try again.'
-                            });
-                        } else if (!interaction.replied) {
-                            await interaction.reply({
-                                content: '❌ Failed to close ticket. Please try again.',
-                                ephemeral: true
-                            });
-                        }
-                    } catch (replyError) {
-                        console.error('Failed to send error response:', replyError);
-                    }
-                }
-            }
+      try {
+        switch (sub) {
+          case 'setup': return await setupTicketSystem(interaction, client);
+          case 'create': return await createTicket(interaction, client);
+          case 'claim': return await claimTicket(interaction, client);
+          case 'close': return await confirmClose(interaction, client);
+          default:
+            return interaction.editReply({
+              embeds: [new EmbedBuilder().setColor('Red').setTitle('Invalid Subcommand').setDescription('Unknown ticket subcommand.')]
+            });
         }
-    ]
-};
+      } catch (err) {
+        client.logger.error('Ticket command error:', err);
+        return interaction.editReply({
+          embeds: [new EmbedBuilder().setColor('Red').setTitle('Error').setDescription('An error occurred.')]
+        });
+      }
+    }
+  }
+];
+
+// Use permissions from PermissionsBitField.Flags
+const FLAGS = PermissionsBitField.Flags;
+
+// Safe permission check
+function hasPerms(member, perms) {
+  if (!member || !member.permissions) return false;
+  if (typeof perms === 'string') perms = [perms];
+  try {
+    return member.permissions.has(perms, true);
+  } catch {
+    return false;
+  }
+}
+
+async function setupTicketSystem(interaction, client) {
+  const embed = new EmbedBuilder()
+    .setTitle('Ticket Setup')
+    .setDescription('Configure ticket category, staff role, and log channel using buttons.')
+    .setColor('#00A2E8');
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('ticket_setup_category').setLabel('Set Category').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('ticket_setup_staff').setLabel('Set Staff Role').setStyle(ButtonStyle.Primary),
+    new ButtonBuilder().setCustomId('ticket_setup_log').setLabel('Set Log Channel').setStyle(ButtonStyle.Primary)
+  );
+  await interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+async function createTicket(interaction, client) {
+  const userId = interaction.user.id;
+  if (client.rateLimits?.has(userId) && Date.now() - client.rateLimits.get(userId) < RATE_LIMIT_MS) {
+    return interaction.editReply({
+      embeds: [client.embeds.createError('Rate Limited', 'Please wait before creating another ticket.')]
+    });
+  }
+  if (TICKET_LOCK.has(userId)) {
+    return interaction.editReply({
+      embeds: [client.embeds.createError('Busy', 'Your previous ticket is still processing.')]
+    });
+  }
+  TICKET_LOCK.add(userId);
+
+  try {
+    const existing = await client.db.getOpenTicket(interaction.guild.id, userId);
+    if (existing) {
+      return interaction.editReply({
+        embeds: [client.embeds.createError('Ticket Exists', `You already have an open ticket: <#${existing.channelid}>`)]
+      });
+    }
+
+    const settings = await client.db.getTicketSettings(interaction.guild.id);
+    if (!settings.category || !settings.staffrole) {
+      return interaction.editReply({
+        embeds: [client.embeds.createError('Not Configured', 'Please use `/ticket setup` to configure the ticket system.')]
+      });
+    }
+
+    const botMember = interaction.guild.members.me;
+    if (!hasPerms(botMember, [FLAGS.ManageChannels, FLAGS.ViewChannel, FLAGS.SendMessages, FLAGS.ManagePermissions])) {
+      return interaction.editReply({
+        embeds: [client.embeds.createError('Missing Bot Perms', 'I need Manage Channels & Permissions permissions.')]
+      });
+    }
+
+    // Create private text channel with accurate permission overwrites
+    const channelName = `ticket-${interaction.user.username}`.toLowerCase().replace(/[^a-z0-9]/g, '').substring(0, 90);
+    const channel = await interaction.guild.channels.create({
+      name: channelName,
+      type: ChannelType.GuildText,
+      parentId: settings.category,
+      permissionOverwrites: [
+        {
+          id: interaction.guild.id,
+          deny: [FLAGS.ViewChannel]
+        },
+        {
+          id: userId,
+          allow: [FLAGS.ViewChannel, FLAGS.SendMessages, FLAGS.ReadMessageHistory, FLAGS.AttachFiles]
+        },
+        {
+          id: settings.staffrole,
+          allow: [FLAGS.ViewChannel, FLAGS.SendMessages, FLAGS.ReadMessageHistory, FLAGS.ManageMessages]
+        },
+        {
+          id: client.user.id,
+          allow: [FLAGS.ViewChannel, FLAGS.SendMessages, FLAGS.ManageChannels, FLAGS.ManageMessages, FLAGS.ReadMessageHistory]
+        }
+      ]
+    });
+
+    // Save the staff role to ticket record (fix missing property)
+    await client.db.createTicket({
+      guildid: interaction.guild.id,
+      userid: userId,
+      channelid: channel.id,
+      staffrole: settings.staffrole,
+      createdat: new Date().toISOString()
+    });
+
+    // Send welcome message tagging staff & user with distinct close button ID
+    const embed = client.embeds.createInfo('🎫 Ticket Created', 'A staff member will assist you shortly.');
+    const row = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId('ticket_close_request')
+        .setLabel('Close Ticket')
+        .setStyle(ButtonStyle.Danger)
+    );
+    await channel.send({ content: `<@&${settings.staffrole}> <@${userId}>`, embeds: [embed], components: [row] });
+
+    client.rateLimits = client.rateLimits || new Map();
+    client.rateLimits.set(userId, Date.now());
+
+    return interaction.editReply({
+      embeds: [client.embeds.createSuccess('Ticket Opened', `Ticket channel created: <#${channel.id}>`)]
+    });
+  } finally {
+    TICKET_LOCK.delete(userId);
+  }
+}
+
+async function claimTicket(interaction, client) {
+  const channel = interaction.channel;
+  const ticket = await client.db.getTicketByChannel(channel.id);
+  if (!ticket || ticket.closedat) {
+    return interaction.editReply({
+      embeds: [client.embeds.createError('Invalid', 'This channel is not an open ticket.')]
+    });
+  }
+  if (!interaction.member.roles.cache.has(ticket.staffrole)) {
+    return interaction.editReply({
+      embeds: [client.embeds.createError('Forbidden', 'You are not ticket staff.')]
+    });
+  }
+  if (ticket.claimedby) {
+    return interaction.editReply({
+      embeds: [client.embeds.createInfo('Already Claimed', `<@${ticket.claimedby}> has already claimed this ticket.`)]
+    });
+  }
+  await client.db.claimTicket(ticket.id, interaction.user.id);
+  return interaction.editReply({
+    embeds: [client.embeds.createSuccess('Claimed', 'You claimed this ticket.')]
+  });
+}
+
+async function confirmClose(interaction, client) {
+  const channel = interaction.channel;
+  const ticket = await client.db.getTicketByChannel(channel.id);
+  if (!ticket || ticket.closedat) {
+    return interaction.editReply({
+      embeds: [client.embeds.createError('Invalid', 'This channel is not an open ticket.')]
+    });
+  }
+  if (interaction.user.id !== ticket.userid && !interaction.member.roles.cache.has(ticket.staffrole)) {
+    return interaction.editReply({
+      embeds: [client.embeds.createError('Forbidden', 'Only the ticket owner or staff can close this ticket.')]
+    });
+  }
+  const embed = client.embeds.createWarning('⚠️ Confirm Close', 'Are you sure you want to close this ticket?');
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId('ticket_close_confirm')
+      .setLabel('Yes, Close')
+      .setStyle(ButtonStyle.Danger),
+    new ButtonBuilder()
+      .setCustomId('ticket_close_cancel')
+      .setLabel('Cancel')
+      .setStyle(ButtonStyle.Secondary)
+  );
+  return interaction.editReply({ embeds: [embed], components: [row] });
+}
+
+module.exports = { commands };
