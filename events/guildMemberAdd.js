@@ -3,7 +3,7 @@
  */
 
 const { TextChannel, NewsChannel } = require('discord.js');
-const { sanitizeString } = require('../utility.js'); // Your utility module
+const { sanitizeString } = require('../commands/utility.js'); // Your utility module
 
 /**
  * Neutralize mass mentions like @everyone and @here to prevent unwanted pings

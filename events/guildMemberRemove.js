@@ -4,7 +4,7 @@
  */
 
 const { TextChannel, NewsChannel } = require('discord.js');
-const { sanitizeString } = require('../utility.js'); // Optional utility for safe strings
+const { sanitizeString } = require('../commands/utility.js'); // Optional utility for safe strings
 
 module.exports = {
   name: 'guildMemberRemove',
