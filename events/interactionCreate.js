@@ -11,7 +11,8 @@ const {
     TextInputBuilder, 
     TextInputStyle, 
     EmbedBuilder,
-    StringSelectMenuBuilder
+    StringSelectMenuBuilder,
+    MessageFlags
 } = require('discord.js');
 
 module.exports = {
@@ -54,7 +55,7 @@ async function handleSlashCommand(interaction, client) {
         client.logger.warn(`Unknown slash command: ${interaction.commandName}`);
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('Unknown Command', 'This command is not recognized.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -74,7 +75,7 @@ async function handleSlashCommand(interaction, client) {
 
         return safeReply(interaction, {
             embeds: [disabledEmbed],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -92,7 +93,7 @@ async function handleSlashCommand(interaction, client) {
 
         return safeReply(interaction, {
             embeds: [permissionEmbed],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -110,7 +111,7 @@ async function handleSlashCommand(interaction, client) {
                     '⏰ Cooldown Active',
                     `Please wait ${remainingTime} second(s) before using this command again.`
                 )],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
     }
@@ -143,9 +144,9 @@ async function handleSlashCommand(interaction, client) {
         .setColor('#FF0000');
 
         if (interaction.replied || interaction.deferred) {
-            await safeReply(interaction, { embeds: [errorEmbed], ephemeral: true }, true);
+            await safeReply(interaction, { embeds: [errorEmbed], flags: MessageFlags.Ephemeral }, true);
         } else {
-            await safeReply(interaction, { embeds: [errorEmbed], ephemeral: true });
+            await safeReply(interaction, { embeds: [errorEmbed], flags: MessageFlags.Ephemeral });
         }
     }
 }
@@ -203,7 +204,7 @@ async function handleButtonInteraction(interaction, client) {
                     '❓ Unknown Button', 
                     'This button interaction is not recognized or may have expired.'
                 )],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
     } catch (error) {
@@ -211,7 +212,7 @@ async function handleButtonInteraction(interaction, client) {
         if (!interaction.replied && !interaction.deferred) {
             await safeReply(interaction, {
                 embeds: [EmbedManager.createErrorEmbed('💥 Button Error', 'An error occurred while processing your request.')],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
     }
@@ -222,14 +223,14 @@ async function handleSelectMenuInteraction(interaction, client) {
     try {
         if (interaction.customId === 'selfrole_select') {
             await handleSelfRoleSelection(interaction, client);
-        } else if (interaction.customId === 'ticketstaffroles') {
+        } else if (interaction.customId === 'ticket_staff_roles') {
             await handleTicketStaffRoleSelection(interaction, client);
         } else if (interaction.customId.startsWith('filter_')) {
             await handleFilterSelection(interaction, client);
         } else {
             await safeReply(interaction, {
                 embeds: [EmbedManager.createErrorEmbed('❓ Unknown Menu', 'This select menu interaction is not recognized.')],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
     } catch (error) {
@@ -237,7 +238,7 @@ async function handleSelectMenuInteraction(interaction, client) {
         if (!interaction.replied && !interaction.deferred) {
             await safeReply(interaction, {
                 embeds: [EmbedManager.createErrorEmbed('💥 Menu Error', 'An error occurred while processing your selection.')],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
     }
@@ -255,7 +256,7 @@ async function handleModalSubmit(interaction, client) {
         } else {
             await safeReply(interaction, {
                 embeds: [EmbedManager.createErrorEmbed('❓ Unknown Modal', 'This modal submission is not recognized.')],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
     } catch (error) {
@@ -263,7 +264,7 @@ async function handleModalSubmit(interaction, client) {
         if (!interaction.replied && !interaction.deferred) {
             await safeReply(interaction, {
                 embeds: [EmbedManager.createErrorEmbed('💥 Modal Error', 'An error occurred while processing your request.')],
-                ephemeral: true
+                flags: MessageFlags.Ephemeral
             });
         }
     }
@@ -277,14 +278,14 @@ async function handleGiveawayEntry(interaction, client) {
     if (!giveaway) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('🎁 Giveaway Not Found', 'This giveaway no longer exists.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
     if (giveaway.ended) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('🎁 Giveaway Ended', 'This giveaway has already ended.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -292,7 +293,7 @@ async function handleGiveawayEntry(interaction, client) {
     if (new Date(giveaway.endsat) < new Date()) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('🎁 Giveaway Expired', 'This giveaway has expired.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -308,7 +309,7 @@ async function handleGiveawayEntry(interaction, client) {
         await interaction.update({ embeds: [embed] });
         await safeReply(interaction, {
             embeds: [EmbedManager.createSuccessEmbed('✅ Left Giveaway', 'You have successfully left the giveaway.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         }, true);
     } else {
         // Add entry
@@ -319,7 +320,7 @@ async function handleGiveawayEntry(interaction, client) {
         await interaction.update({ embeds: [embed] });
         await safeReply(interaction, {
             embeds: [EmbedManager.createSuccessEmbed('🎉 Entered Giveaway', 'You have successfully entered the giveaway!')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         }, true);
     }
 }
@@ -331,7 +332,7 @@ async function handleCreateTicketButton(interaction, client) {
     if (!settings) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('🎫 Ticket System Not Setup', 'The ticket system has not been configured for this server.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -339,7 +340,7 @@ async function handleCreateTicketButton(interaction, client) {
     if (!category) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('🎫 Category Not Found', 'The ticket category could not be found.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -348,11 +349,11 @@ async function handleCreateTicketButton(interaction, client) {
     if (existingTicket) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('🎫 Ticket Already Exists', `You already have an open ticket: <#${existingTicket.channelid}>`)],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
-    await interaction.deferReply({ ephemeral: true });
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
     try {
         // Create ticket channel with enhanced setup
@@ -512,7 +513,7 @@ async function handleCloseTicketButton(interaction, client) {
     if (!ticket) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('❌ Not a Ticket', 'This button can only be used in ticket channels.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -547,7 +548,7 @@ async function handleCloseTicketButton(interaction, client) {
     if (!canClose) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('🚫 Permission Denied', 'Only staff members or the ticket owner can close tickets.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -577,14 +578,14 @@ async function handleClaimTicketButton(interaction, client) {
     if (!ticket) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('❌ Not a Ticket', 'This button can only be used in ticket channels.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
     if (!PermissionManager.isHelper(interaction.member)) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('🚫 Permission Denied', 'Only staff members can claim tickets.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -595,7 +596,7 @@ async function handleClaimTicketButton(interaction, client) {
                 '⚠️ Already Claimed', 
                 `This ticket is already claimed by ${claimedUser ? claimedUser.tag : 'Unknown User'}`
             )],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -630,7 +631,7 @@ async function handleTicketCloseModal(interaction, client) {
     if (!ticket) {
         return safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('❌ Not a Ticket', 'This modal can only be used in ticket channels.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
@@ -756,12 +757,12 @@ async function handleSelfRoleSelection(interaction, client) {
 
         const embed = EmbedManager.createSuccessEmbed('🎭 Roles Updated', description.trim());
 
-        await safeReply(interaction, { embeds: [embed], ephemeral: true });
+        await safeReply(interaction, { embeds: [embed], flags: MessageFlags.Ephemeral });
     } catch (error) {
         client.logger.error('Error updating self-roles:', error);
         await safeReply(interaction, {
             embeds: [EmbedManager.createErrorEmbed('💥 Error', 'Failed to update your roles. Please try again.')],
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 }
@@ -776,44 +777,61 @@ async function handleTicketStaffRoleSelection(interaction, client) {
     if (!panelData) {
         return safeReply(interaction, {
             content: '❌ Panel setup session expired. Please run the command again.',
-            ephemeral: true
+            flags: MessageFlags.Ephemeral
         });
     }
 
     const selectedRoleIds = interaction.values;
 
-    // Update settings with selected staff roles
-    client.db.setTicketSettings(
-        panelData.guildId, 
-        null, // category will remain the same
-        JSON.stringify(selectedRoleIds), 
-        null, // log channel will remain the same
-        null // ticket number will remain the same
-    );
+    try {
+        // Get existing settings or create new ones
+        let settings = client.db.getTicketSettings(panelData.guildId);
+        if (!settings) {
+            return safeReply(interaction, {
+                content: "❌ Please setup the ticket system first using `/ticket-setup`",
+                flags: MessageFlags.Ephemeral
+            });
+        }
 
-    // Create the ticket panel
-    const embed = EmbedManager.createEmbed(
-        panelData.title,
-        panelData.description,
-        null
-    ).setColor('#00FF00');
+        // Update settings with selected staff roles
+        client.db.setTicketSettings(
+            panelData.guildId,
+            settings.categoryid,
+            JSON.stringify(selectedRoleIds),
+            settings.logchannelid,
+            settings.nextticketnumber || 1
+        );
 
-    const button = new ButtonBuilder()
-        .setCustomId('createticketbutton')
-        .setLabel(panelData.buttonText)
-        .setStyle(ButtonStyle.Primary)
-        .setEmoji('🎫');
+        // Create the ticket panel
+        const embed = new EmbedBuilder()
+            .setTitle(panelData.title)
+            .setDescription(panelData.description)
+            .setColor('#00FF00');
 
-    const row = new ActionRowBuilder().addComponents(button);
+        const button = new ButtonBuilder()
+            .setCustomId('createticketbutton')
+            .setLabel(panelData.buttonText)
+            .setStyle(ButtonStyle.Primary)
+            .setEmoji('🎫');
 
-    await interaction.update({
-        content: '✅ **Step 2 Complete!** Here is your ticket panel:',
-        embeds: [embed],
-        components: [row]
-    });
+        const row = new ActionRowBuilder().addComponents(button);
 
-    // Clean up temp data
-    client.tempPanelData.delete(storageKey);
+        await interaction.update({
+            content: '✅ **Step 2 Complete!** Here is your ticket panel:',
+            embeds: [embed],
+            components: [row]
+        });
+
+        // Clean up temp data
+        client.tempPanelData.delete(storageKey);
+
+    } catch (error) {
+        client.logger.error('Error in handleTicketStaffRoleSelection:', error);
+        await safeReply(interaction, {
+            content: "❌ Failed to create ticket panel. Please try again.",
+            flags: MessageFlags.Ephemeral
+        });
+    }
 }
 
 // Helper function to create giveaway embed
@@ -834,35 +852,35 @@ function createGiveawayEmbed(giveaway, entryCount) {
 
 // Placeholder handlers for future features
 async function handleLeaderboardPagination(interaction, client) {
-    await safeReply(interaction, { content: 'Leaderboard pagination coming soon!', ephemeral: true });
+    await safeReply(interaction, { content: 'Leaderboard pagination coming soon!', flags: MessageFlags.Ephemeral });
 }
 
 async function handleUserProfilePagination(interaction, client) {
-    await safeReply(interaction, { content: 'User profile pagination coming soon!', ephemeral: true });
+    await safeReply(interaction, { content: 'User profile pagination coming soon!', flags: MessageFlags.Ephemeral });
 }
 
 async function handleWarnConfirmation(interaction, client) {
-    await safeReply(interaction, { content: 'Warning confirmation coming soon!', ephemeral: true });
+    await safeReply(interaction, { content: 'Warning confirmation coming soon!', flags: MessageFlags.Ephemeral });
 }
 
 async function handleMuteConfirmation(interaction, client) {
-    await safeReply(interaction, { content: 'Mute confirmation coming soon!', ephemeral: true });
+    await safeReply(interaction, { content: 'Mute confirmation coming soon!', flags: MessageFlags.Ephemeral });
 }
 
 async function handleRoleButton(interaction, client) {
-    await safeReply(interaction, { content: 'Role button handling coming soon!', ephemeral: true });
+    await safeReply(interaction, { content: 'Role button handling coming soon!', flags: MessageFlags.Ephemeral });
 }
 
 async function handleFilterSelection(interaction, client) {
-    await safeReply(interaction, { content: 'Filter selection coming soon!', ephemeral: true });
+    await safeReply(interaction, { content: 'Filter selection coming soon!', flags: MessageFlags.Ephemeral });
 }
 
 async function handleReportModal(interaction, client) {
-    await safeReply(interaction, { content: 'Report modal coming soon!', ephemeral: true });
+    await safeReply(interaction, { content: 'Report modal coming soon!', flags: MessageFlags.Ephemeral });
 }
 
 async function handleSuggestionModal(interaction, client) {
-    await safeReply(interaction, { content: 'Suggestion modal coming soon!', ephemeral: true });
+    await safeReply(interaction, { content: 'Suggestion modal coming soon!', flags: MessageFlags.Ephemeral });
 }
 
 // Safe reply function to handle interaction states
