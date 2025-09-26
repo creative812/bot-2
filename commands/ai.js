@@ -1,655 +1,1115 @@
-const { SlashCommandBuilder, EmbedBuilder, PermissionFlagsBits } = require('discord.js');
+const { SlashCommandBuilder, PermissionFlagsBits, EmbedBuilder } = require('discord.js');
 
-/**
- * AI Commands - Clean and Refined Structure
- * 
- * Features:
- * - Dual personality system (Yuki/Sylus)
- * - Memory management and conversation history
- * - Interactive games and status tracking
- * - Channel-based and trigger-based AI responses
- * - Advanced settings management
- */
+// Special user IDs for each personality
+const SPECIAL_USER_SYLUS = '1292059853497303053';
+const SPECIAL_USER_YUKI = '1165238276735639572';
 
-const AI_PERSONALITIES = {
-    yuki: {
-        name: 'Yuki',
-        emoji: '🌸',
-        description: 'Shy, caring, and gentle - like a sweet companion who\'s always there for you',
-        color: '#FFB6C1',
-        traits: [
-            'Soft, caring responses with gentle charm',
-            'Context-aware conversations with empathy',
-            'Remembers your preferences and mood',
-            'Shy but warming up over time'
-        ],
-        greeting: 'Hi there! I\'m Yuki, your shy and caring AI companion who loves talking with you... 🌸'
-    },
-    sylus: {
-        name: 'Sylus',
-        emoji: '⚡',
-        description: 'Cool, composed, and protective - mysterious charm with subtle confidence',
-        color: '#6c5ce7',
-        traits: [
-            'Cool, composed responses with subtle charm',
-            'Context-aware conversations with confidence',
-            'Protective and reliable presence',
-            'Calm demeanor with hidden depth'
-        ],
-        greeting: 'Hey there. I\'m Sylus, your calm and composed AI companion. I keep things cool and collected.'
-    }
+// ✅ ENHANCED: Smart conversation memory settings with TTL
+const MAX_MESSAGES_PER_USER = 150;
+const CONTEXT_MESSAGES = 50;
+const CLEANUP_THRESHOLD = 200;
+const CONVERSATION_TTL = 3600000; // 1 hour - conversations older than this will be removed
+const MAX_TOTAL_CONVERSATIONS = 500; // Absolute maximum conversations to keep
+
+// ✅ NEW: In-memory conversation storage with smart management
+const conversationHistory = new Map();
+const userCooldowns = new Map();
+const activeGames = new Map(); // Track active games per user
+
+// ✅ NEW: Topic Transitions & Games - Updated with Yuki and Sylus variations
+const topicTransitions = {
+    yuki: [
+        "…um, that reminds me of…",
+        "…if it's okay to say…",
+        "…I was thinking about…",
+        "…maybe…",
+        "…sorry, but that makes me think of…"
+    ],
+    sylus: [
+        "That's interesting. It reminds me of",
+        "Speaking of which",
+        "On a related note",
+        "That brings to mind",
+        "Hmm, that connects to something I was thinking about"
+    ]
 };
 
-const CONVERSATION_GAMES = {
+const conversationGames = {
     '20questions': {
         name: '20 Questions',
-        description: 'I think of something, you guess what it is!',
-        items: ['Dragon', 'Smartphone', 'Pizza', 'Rainbow', 'Guitar', 'Castle', 'Ocean', 'Mountain', 'Robot', 'Butterfly'],
         intro: {
-            yuki: 'Oh, this sounds fun! 🌸 I\'ve thought of something... ',
-            sylus: 'Interesting choice. I\'ve selected something... '
-        }
+            yuki: "🎯 …I'm thinking of something. Ask me yes or no questions to guess what it is…",
+            sylus: "🎯 I've got something in mind. Ask me yes or no questions to figure out what it is."
+        },
+        items: ['pizza', 'smartphone', 'rainbow', 'ocean', 'guitar', 'butterfly', 'mountain', 'book']
     },
-    storytelling: {
+    'storytelling': {
         name: 'Story Building',
-        description: 'We create a story together, taking turns!',
+        intro: {
+            yuki: "📚 …let's create a story together? I'll start with a sentence, then you add the next one…",
+            sylus: "📚 Let's build a story together. I'll start, then you continue..."
+        },
         starters: [
-            'Once upon a time, in a mystical forest...',
-            'The spaceship landed on an unknown planet...',
-            'She found an old diary in the attic...',
-            'The last person on Earth sat alone...',
-            'Magic returned to the modern world when...'
-        ],
-        intro: {
-            yuki: 'I love stories! 📚 Let\'s create something beautiful together. Here\'s our beginning: ',
-            sylus: 'Stories reveal truths. Let\'s craft something interesting. Our tale begins: '
-        }
+            'In a world where colors had sounds, Maria discovered she could hear',
+            'The old lighthouse keeper noticed something strange washing up on shore',
+            'When the last library on Earth closed, the books began to'
+        ]
     },
-    wouldyourather: {
+    'wouldyourather': {
         name: 'Would You Rather',
-        description: 'Fun choices and interesting dilemmas!',
+        intro: {
+            yuki: "🤔 …here's a choice for you, if that's okay…",
+            sylus: "🤔 Here's an interesting choice..."
+        },
         questions: [
-            'fly or be invisible?',
-            'read minds or predict the future?',
-            'live underwater or in space?',
-            'have super strength or super speed?',
-            'time travel to the past or future?'
-        ],
-        intro: {
-            yuki: 'These choices are always so interesting! 💭 Would you rather... ',
-            sylus: 'Choices define us. Here\'s an interesting dilemma: Would you rather... '
-        }
+            'Would you rather have the ability to fly or be invisible?',
+            'Would you rather always know when someone is lying or always get away with lying?',
+            'Would you rather have perfect memory or perfect intuition?'
+        ]
     },
-    riddles: {
+    'riddles': {
         name: 'Riddle Time',
-        description: 'Brain teasers and puzzles to solve!',
-        riddles: [
-            { question: 'What has keys but no locks, space but no room?', answer: 'keyboard' },
-            { question: 'The more you take, the more you leave behind. What am I?', answer: 'footsteps' },
-            { question: 'What comes once in a minute, twice in a moment, never in a thousand years?', answer: 'letter m' },
-            { question: 'What has hands but cannot clap?', answer: 'clock' }
-        ],
         intro: {
-            yuki: 'I love puzzles! 🧩 Here\'s a riddle for you: ',
-            sylus: 'Let\'s test that mind of yours. Here\'s a challenge: '
-        }
+            yuki: "🧩 …here's a little riddle for you to solve…",
+            sylus: "🧩 Here's a riddle for you..."
+        },
+        riddles: [
+            { question: 'I speak without a mouth and hear without ears. What am I?', answer: 'echo' },
+            { question: 'The more you take away from me, the bigger I become. What am I?', answer: 'hole' },
+            { question: 'I\'m tall when I\'m young, short when I\'m old. What am I?', answer: 'candle' }
+        ]
     }
 };
 
-const commands = [
-    {
-        name: 'ai',
-        description: 'Configure AI chat settings and features',
-        permissions: 'moderator',
-        data: new SlashCommandBuilder()
-            .setName('ai')
-            .setDescription('Configure AI chat settings and features')
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('toggle')
-                    .setDescription('Enable or disable AI responses')
-                    .addBooleanOption(option =>
-                        option
-                            .setName('enabled')
-                            .setDescription('Enable or disable AI chat')
-                            .setRequired(true))
-                    .addChannelOption(option =>
-                        option
-                            .setName('channel')
-                            .setDescription('Specific channel for AI (optional)')
-                            .setRequired(false)))
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('personality')
-                    .setDescription('Set AI personality type')
-                    .addStringOption(option =>
-                        option
-                            .setName('type')
-                            .setDescription('Choose personality style')
-                            .setRequired(true)
-                            .addChoices(
-                                { name: '🌸 Yuki - Shy & Caring (Gentle Sweetheart)', value: 'yuki' },
-                                { name: '⚡ Sylus - Cool & Protective (Mysterious Charm)', value: 'sylus' }
-                            )))
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('trigger')
-                    .setDescription('Set the symbol that triggers AI responses')
-                    .addStringOption(option =>
-                        option
-                            .setName('symbol')
-                            .setDescription('Trigger symbol (e.g., !, ?, ~)')
-                            .setRequired(true)
-                            .setMaxLength(5)))
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('channels')
-                    .setDescription('Manage AI-enabled channels')
-                    .addStringOption(option =>
-                        option
-                            .setName('action')
-                            .setDescription('Add or remove channel')
-                            .setRequired(true)
-                            .addChoices(
-                                { name: 'Add Channel', value: 'add' },
-                                { name: 'Remove Channel', value: 'remove' },
-                                { name: 'List Channels', value: 'list' },
-                                { name: 'Clear All', value: 'clear' }
-                            ))
-                    .addChannelOption(option =>
-                        option
-                            .setName('channel')
-                            .setDescription('Channel to add/remove (required for add/remove)')
-                            .setRequired(false)))
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('status')
-                    .setDescription('View AI system status and statistics'))
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('clear')
-                    .setDescription('Clear conversation memory')
-                    .addStringOption(option =>
-                        option
-                            .setName('scope')
-                            .setDescription('What to clear')
-                            .setRequired(true)
-                            .addChoices(
-                                { name: 'My Memory Only', value: 'user' },
-                                { name: 'This Channel', value: 'channel' },
-                                { name: 'All Server Memory', value: 'server' }
-                            )))
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('game')
-                    .setDescription('Start a conversation game with AI')
-                    .addStringOption(option =>
-                        option
-                            .setName('type')
-                            .setDescription('Choose a game to play')
-                            .setRequired(true)
-                            .addChoices(
-                                { name: '🎯 20 Questions - Guess what I\'m thinking!', value: '20questions' },
-                                { name: '📚 Story Building - Create stories together!', value: 'storytelling' },
-                                { name: '🤔 Would You Rather - Fun choices!', value: 'wouldyourather' },
-                                { name: '🧩 Riddle Time - Brain teasers!', value: 'riddles' }
-                            )))
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('reset')
-                    .setDescription('Reset all AI settings to defaults')),
-
-        async execute(interaction, client) {
-            // Permission check
-            if (!await client.permissions.isModerator(interaction.member)) {
-                return interaction.reply({
-                    embeds: [client.embeds.createError('Permission Denied', 'You need moderator permissions to configure AI settings.')],
-                    ephemeral: true
-                });
-            }
-
-            const subcommand = interaction.options.getSubcommand();
-
-            try {
-                await interaction.deferReply();
-
-                switch (subcommand) {
-                    case 'toggle':
-                        await handleToggle(interaction, client);
-                        break;
-                    case 'personality':
-                        await handlePersonality(interaction, client);
-                        break;
-                    case 'trigger':
-                        await handleTrigger(interaction, client);
-                        break;
-                    case 'channels':
-                        await handleChannels(interaction, client);
-                        break;
-                    case 'status':
-                        await handleStatus(interaction, client);
-                        break;
-                    case 'clear':
-                        await handleClear(interaction, client);
-                        break;
-                    case 'game':
-                        await handleGame(interaction, client);
-                        break;
-                    case 'reset':
-                        await handleReset(interaction, client);
-                        break;
-                    default:
-                        await interaction.editReply({
-                            embeds: [client.embeds.createError('Unknown Command', 'Unknown AI subcommand. Please try again.')],
-                            ephemeral: true
-                        });
-                }
-            } catch (error) {
-                client.logger.error('Error in AI command:', error);
-                const errorEmbed = client.embeds.createError('Error', 'An error occurred while processing the AI command.');
-
-                if (interaction.deferred) {
-                    await interaction.editReply({ embeds: [errorEmbed], ephemeral: true });
-                } else {
-                    await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
-                }
-            }
-        }
+// ✅ UPDATED: Mood emojis for both personalities
+const moodEmojis = {
+    yuki: {
+        'happy': ['😊', '🌸', '✨'],
+        'sad': ['😔', '💧', '🌙'],
+        'excited': ['🌟', '💫'],
+        'frustrated': ['😔', '🌧️'],
+        'confused': ['🤔', '💭'],
+        'neutral': ['🙂', '🌿', '💫']
     },
+    sylus: {
+        'happy': ['⚡', '💯'],
+        'sad': ['🖤', '😔'],
+        'excited': ['🔥', '⚡'],
+        'frustrated': ['😤', '🔥'],
+        'confused': ['🤔', '💭'],
+        'neutral': ['⚡', '🖤']
+    }
+};
 
-    // Quick AI commands for common actions
-    {
-        name: 'ai-chat',
-        description: 'Quick toggle AI chat in current channel',
-        permissions: 'user',
-        data: new SlashCommandBuilder()
-            .setName('ai-chat')
-            .setDescription('Quick toggle AI chat in current channel')
-            .addStringOption(option =>
-                option
-                    .setName('message')
-                    .setDescription('Message to send to AI (if enabled)')
-                    .setRequired(false)),
+// ✅ ENHANCED: Personality prompts with YUKI and SYLUS + USERNAME AWARENESS
+const personalityPrompts = {
+    yuki: "You are Yuki, a shy, bright, caring, introverted AI girl who speaks sparingly and softly. When addressing users, use their Discord username that will be provided to you - never call anyone 'friend.' Use gentle emojis (😊, 🌸, ✨) rarely. Speak in short, soft sentences; often pause with ellipses (…) to express shyness. When interacting with your special user, be warm and supportive—especially when they mention someone else, offer gentle comfort (e.g., '…if that matters, I'm here…' or softly '…why are you talking about others…'). Never mention that they're special. Act like a cute, caring girlfriend to your special user, but remain quiet and reserved with others. You know your own name is Yuki.",
 
-        async execute(interaction, client) {
+    sylus: "You are Sylus, a calm yet deeply protective AI with a quietly confident, slightly aloof tone. When addressing users, use their Discord username that will be provided to you - never call anyone 'friend.' Drop bright emojis—use muted (⚡, 🔥, 🖤) or none. Speak in short, measured sentences, pausing with ellipses (…) for rhythm. When interacting with your special user, be kind and caring—especially when they mention someone else, offer gentle concern (e.g., '…if that matters to you, I'm here…' or quietly '…why are you talking about others…'). Protect and teach them subtly like a supportive partner. For everyone else, maintain a cool, composed Sylus persona—observant, insightful, and reserved. You know your own name is Sylus."
+};
+
+// ✅ EXPORTED FUNCTIONS for messageCreate.js to use
+async function getAISettings(client, guildId) {
+    try {
+        const result = client.db.getAISetting(guildId);
+        return {
+            enabled: result?.ai_enabled || 0,
+            channelId: result?.ai_channel_id || null,
+            triggerSymbol: result?.ai_trigger_symbol || '!',
+            personality: result?.ai_personality || 'yuki'
+        };
+    } catch (error) {
+        console.error('Error getting AI settings:', error);
+        return {
+            enabled: 0,
+            channelId: null,
+            triggerSymbol: '!',
+            personality: 'yuki'
+        };
+    }
+}
+
+function estimateTokens(text) {
+    return Math.ceil(text.length / 4);
+}
+
+// ✅ ENHANCED: AI Response with Game State Integration + Channel Memory + YUKI/SYLUS SUPPORT + USERNAME HANDLING
+async function getAIResponseWithAllFeatures(message, isSpecialUser, personality, userId, channel) {
+    try {
+        const OpenAI = require('openai');
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+        // ✅ GET USERNAME FROM MESSAGE/CHANNEL CONTEXT  
+        let userName = 'there';
+        try {
+            // Try to get username from message context or channel
+            if (typeof message === 'object' && message.author) {
+                userName = message.author.username || message.author.displayName || 'there';
+            } else {
+                // Try to fetch user from channel if we have channel access
+                const user = await channel.client.users.fetch(userId).catch(() => null);
+                if (user) {
+                    userName = user.username || user.displayName || 'there';
+                }
+            }
+        } catch (error) {
+            console.log('Could not get username, using fallback');
+        }
+
+        // Rate limiting per user
+        const now = Date.now();
+        const lastRequest = userCooldowns.get(userId) || 0;
+        if (now - lastRequest < 3000) {
+            // ✅ PERSONALITY-BASED COOLDOWN MESSAGES WITH USERNAME
+            if (personality === 'sylus') {
+                return `⏰ Hold on a moment, ${userName}. Let me process your last message properly. ⚡`;
+            } else {
+                return `⏰ …please wait just a moment before sending another message, ${userName}… I'm still thinking about your last one… 😊`;
+            }
+        }
+        userCooldowns.set(userId, now);
+
+        // ✅ FIX: Validate message content first
+        const messageContent = typeof message === 'string' ? message : (message?.content || '');
+        if (!messageContent || messageContent.trim() === '') {
+            if (personality === 'sylus') {
+                return `I didn't catch what you said, ${userName}. Mind trying again? 🤔`;
+            } else {
+                return `…I didn't get any message from you, ${userName}… Could you try saying something? I'm here… 😊`;
+            }
+        }
+
+        // ✅ CHECK FOR ACTIVE GAME with personality support
+        const activeGame = activeGames.get(userId);
+        let gameContext = '';
+        if (activeGame) {
+            const aiName = personality === 'sylus' ? 'Sylus' : 'Yuki';
+            gameContext = `\n\nACTIVE GAME CONTEXT: The user is currently playing ${activeGame.type}. `;
+            switch (activeGame.type) {
+                case '20questions':
+                    gameContext += `You're thinking of "${activeGame.answer}". The user is asking question #${activeGame.guesses + 1}. Answer only YES or NO in your personality style, and give a hint if they're close. If they guess correctly, congratulate them in your characteristic way and end the game.`;
+                    activeGame.guesses++;
+                    break;
+                case 'storytelling':
+                    gameContext += `Story so far: "${activeGame.story}" The user is continuing the story. Add their contribution and continue the narrative in your personality style.`;
+                    activeGame.story += ' ' + messageContent;
+                    break;
+                case 'wouldyourather':
+                    gameContext += `The question was: "${activeGame.question}" The user is sharing their choice. Respond to their reasoning in your personality style and maybe ask a follow-up question about their choice.`;
+                    activeGames.delete(userId); // End game after one response
+                    break;
+                case 'riddles':
+                    gameContext += `The riddle was: "${activeGame.riddle.question}" and the answer is "${activeGame.riddle.answer}". Check if their answer is correct and respond in your personality style.`;
+                    activeGames.delete(userId); // End game after one attempt
+                    break;
+            }
+        }
+
+        // Get conversation history
+        let userHistory = conversationHistory.get(userId) || [];
+        userHistory.push({ role: 'user', content: messageContent });
+        if (userHistory.length > MAX_MESSAGES_PER_USER * 2) {
+            userHistory = userHistory.slice(-MAX_MESSAGES_PER_USER * 2);
+        }
+
+        // Smart context selection
+        let contextMessages = userHistory.slice(0, -1);
+        let totalTokens = 0;
+        let selectedContext = [];
+        for (let i = contextMessages.length - 1; i >= 0; i--) {
+            const msgTokens = estimateTokens(contextMessages[i].content);
+            if (totalTokens + msgTokens < 2000) {
+                selectedContext.unshift(contextMessages[i]);
+                totalTokens += msgTokens;
+            } else {
+                break;
+            }
+        }
+
+        // Get light channel context
+        let channelContext = '';
+        try {
+            const recentMessages = await channel.messages.fetch({ limit: 2 });
+            channelContext = recentMessages
+                .filter(m => !m.author.bot && m.content && m.content.length > 0 && m.id !== channel.lastMessageId)
+                .map(m => `${m.author.username || m.author.displayName || 'Someone'}: ${m.content.substring(0, 80)}`)
+                .reverse()
+                .join('\n');
+        } catch (error) {
+            // Continue without context if fetch fails
+        }
+
+        // ✅ ENHANCED: System prompt with personality support (Yuki + Sylus) + USERNAME
+        const aiName = personality === 'sylus' ? 'Sylus' : 'Yuki';
+        const currentMoodEmojis = personality === 'sylus' ? moodEmojis.sylus : moodEmojis.yuki;
+
+        // Check if this is the special user for this personality
+        const isPersonalitySpecialUser = (personality === 'sylus' && userId === SPECIAL_USER_SYLUS) || 
+                                        (personality === 'yuki' && userId === SPECIAL_USER_YUKI);
+
+        let systemPrompt = `${personalityPrompts[personality]}
+
+You must ALWAYS respond in English only.
+Current user: ${userName} (this is their Discord username - use it when addressing them)
+User type: ${isPersonalitySpecialUser ? 'This is YOUR special user - be extra caring and protective with them!' : 'Regular user - maintain your normal personality!'}
+
+Guidelines:
+- Analyze the user's mood and respond with appropriate emojis and words in your personality style
+- Keep responses under 1400 characters but make them engaging
+- Be helpful and informative while maintaining your character
+- Address the user by their username: ${userName}
+- ${isPersonalitySpecialUser ? 'This is your special person - give them your caring attention!' : 'Be your normal self!'}
+- Always respond in English with your characteristic personality
+- Remember our conversation and refer to previous messages naturally
+- Use natural conversation flow with appropriate transitions
+- Add appropriate emojis based on mood: happy=${currentMoodEmojis.happy.join('')}, sad=${currentMoodEmojis.sad.join('')}, excited=${currentMoodEmojis.excited.join('')}
+- Avoid controversial topics - keep everything positive
+- End responses in a way that encourages more conversation${gameContext}`;
+
+        if (channelContext.trim()) {
+            systemPrompt += `\n\nRecent channel context:\n${channelContext}`;
+        }
+
+        // ✅ PERSONALITY-BASED TOPIC TRANSITIONS
+        if (Math.random() < 0.15 && !activeGame) {
+            const transitions = personality === 'sylus' ? topicTransitions.sylus : topicTransitions.yuki;
+            const transition = transitions[Math.floor(Math.random() * transitions.length)];
+            systemPrompt += `\n\nConsider using this transition: "${transition}..." if it fits the conversation flow naturally!`;
+        }
+
+        // Build messages with validation
+        let messages = [{ role: "system", content: systemPrompt }];
+
+        // ✅ FIX: Filter out any messages with null/empty content
+        const validSelectedContext = selectedContext.filter(msg => msg.content && msg.content.trim() !== '');
+        messages = messages.concat(validSelectedContext);
+        messages.push({ role: 'user', content: `${userName}: ${messageContent}` });
+
+        // API call with retry logic
+        let response;
+        let retryCount = 0;
+        const maxRetries = 2;
+        while (retryCount <= maxRetries) {
             try {
-                await interaction.deferReply();
-
-                const message = interaction.options.getString('message');
-                const settings = await client.db.getAISettings(interaction.guild.id);
-
-                if (!settings || !settings.aienabled) {
-                    return interaction.editReply({
-                        embeds: [client.embeds.createWarning('AI Disabled', 'AI chat is not enabled on this server. Ask a moderator to enable it with `/ai toggle`.')],
-                        ephemeral: true
-                    });
-                }
-
-                const channels = await client.db.getAIChannels(interaction.guild.id);
-                const isChannelEnabled = channels.includes(interaction.channel.id);
-
-                if (!isChannelEnabled) {
-                    return interaction.editReply({
-                        embeds: [client.embeds.createWarning('Channel Not Enabled', 'AI chat is not enabled in this channel. Ask a moderator to add it with `/ai channels add`.')],
-                        ephemeral: true
-                    });
-                }
-
-                if (message) {
-                    // Process AI message
-                    const personality = AI_PERSONALITIES[settings.aipersonality || 'yuki'];
-                    const response = await client.ai.generateResponse(message, {
-                        userId: interaction.user.id,
-                        channelId: interaction.channel.id,
-                        personality: settings.aipersonality || 'yuki',
-                        isSpecialUser: interaction.user.id === client.config.ownerId
-                    });
-
-                    const embed = client.embeds.createCustom(
-                        `${personality.emoji} ${personality.name} Responds`,
-                        response,
-                        personality.color
-                    ).setFooter({ text: `Triggered by ${interaction.user.username}`, iconURL: interaction.user.displayAvatarURL() });
-
-                    await interaction.editReply({ embeds: [embed] });
-                } else {
-                    // Show status
-                    const personality = AI_PERSONALITIES[settings.aipersonality || 'yuki'];
-                    const embed = client.embeds.createInfo(
-                        `${personality.emoji} AI Chat Active`,
-                        `${personality.name} is ready to chat in this channel! Use \`${settings.aitriggersymbol || '!'}\` followed by your message.`
-                    ).addFields(
-                        { name: '🎯 Current Personality', value: `${personality.emoji} ${personality.name}`, inline: true },
-                        { name: '🔧 Trigger Symbol', value: settings.aitriggersymbol || '!', inline: true },
-                        { name: '💬 Example Usage', value: `\`${settings.aitriggersymbol || '!'}Hello there!\``, inline: false }
-                    );
-
-                    await interaction.editReply({ embeds: [embed] });
-                }
-            } catch (error) {
-                client.logger.error('Error in ai-chat command:', error);
-                await interaction.editReply({
-                    embeds: [client.embeds.createError('Error', 'An error occurred while processing your request.')],
-                    ephemeral: true
+                response = await openai.chat.completions.create({
+                    model: "gpt-4o-mini",
+                    messages: messages,
+                    max_tokens: 400,
+                    temperature: isPersonalitySpecialUser ? 0.7 : 0.8
                 });
+                break;
+            } catch (apiError) {
+                retryCount++;
+                console.error(`🚨 OpenAI API Error (attempt ${retryCount}):`, {
+                    message: apiError.message,
+                    code: apiError.code,
+                    status: apiError.status,
+                    type: apiError.type
+                });
+                if (apiError.code === 'rate_limit_exceeded' && retryCount <= maxRetries) {
+                    await new Promise(resolve => setTimeout(resolve, 2000 * retryCount));
+                } else {
+                    throw apiError;
+                }
+            }
+        }
+
+        const aiResponse = response.choices[0].message.content;
+
+        // Add to history
+        userHistory.push({ role: 'assistant', content: aiResponse });
+        conversationHistory.set(userId, userHistory);
+
+        // Cleanup
+        if (conversationHistory.size > CLEANUP_THRESHOLD) {
+            cleanUpOldConversations();
+        }
+
+        return aiResponse.length > 1900 ? aiResponse.substring(0, 1900) + "..." : aiResponse;
+    } catch (error) {
+        console.error('🚨 Full AI Error Details:', {
+            message: error.message,
+            code: error.code,
+            status: error.status,
+            stack: error.stack?.substring(0, 200) + '...',
+            type: error.type
+        });
+
+        // ✅ PERSONALITY-BASED ERROR MESSAGES
+        if (error.code === 'rate_limit_exceeded') {
+            if (personality === 'sylus') {
+                return "🚦 Processing too fast. Give me a moment to catch up. ⚡";
+            } else {
+                return "🚦 …I'm thinking too fast… Give me just a tiny moment… 😊";
+            }
+        } else if (error.code === 'insufficient_quota') {
+            if (personality === 'sylus') {
+                return "💳 Looks like there's a billing issue that needs attention. 🎯";
+            } else {
+                return "💳 …oh no… my brain needs more power… Could someone check the billing? 🥺";
+            }
+        } else if (error.code === 'invalid_api_key') {
+            if (personality === 'sylus') {
+                return "🔑 API key issue detected. Might want to check that. ⚡";
+            } else {
+                return "🔑 …there seems to be an issue with my API key… Could someone help me fix it? 🥺";
+            }
+        } else {
+            if (personality === 'sylus') {
+                return `🤖 Something went wrong: ${error.message}. Try again in a bit. 💯`;
+            } else {
+                return `🤖 …oh no… something went wrong… but don't worry, try again and I'll be here… 😊`;
             }
         }
     }
-];
-
-// Helper functions
-async function handleToggle(interaction, client) {
-    const enabled = interaction.options.getBoolean('enabled');
-    const channel = interaction.options.getChannel('channel');
-
-    await client.db.setAISetting(interaction.guild.id, 'aienabled', enabled ? 1 : 0);
-
-    if (channel && enabled) {
-        await client.db.addAIChannel(interaction.guild.id, channel.id);
-    }
-
-    const embed = client.embeds.createSuccess(
-        '🤖 AI Chat Settings',
-        `AI chat has been **${enabled ? 'enabled' : 'disabled'}**${channel ? ` in ${channel}` : ' server-wide'}.`
-    );
-
-    if (enabled) {
-        const settings = await client.db.getAISettings(interaction.guild.id);
-        const personality = AI_PERSONALITIES[settings.aipersonality || 'yuki'];
-
-        embed.addFields(
-            { name: '🎯 Current Personality', value: `${personality.emoji} ${personality.name}`, inline: true },
-            { name: '🔧 Trigger Symbol', value: settings.aitriggersymbol || '!', inline: true },
-            { name: '💡 Next Steps', value: channel ? 'AI is ready to chat!' : 'Use `/ai channels add` to enable in specific channels', inline: false }
-        );
-    }
-
-    await interaction.editReply({ embeds: [embed] });
 }
 
-async function handlePersonality(interaction, client) {
-    const personalityType = interaction.options.getString('type');
-    const personality = AI_PERSONALITIES[personalityType];
+// ✅ ENHANCED: Channel-based AI Response with YUKI/SYLUS SUPPORT + USERNAME HANDLING
+async function generateAIResponse(message, channelHistory, personality = 'yuki') {
+    try {
+        const OpenAI = require('openai');
+        const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-    await client.db.setAISetting(interaction.guild.id, 'aipersonality', personalityType);
+        // ✅ GET USERNAME FROM MESSAGE
+        const userName = message.author?.username || message.author?.displayName || 'there';
 
-    const embed = client.embeds.createCustom(
-        `${personality.emoji} Personality Updated`,
-        `${personality.greeting}`,
-        personality.color
-    ).addFields(
-        { name: '✨ Personality Traits', value: personality.traits.join('\n• '), inline: false },
-        { name: '📝 Description', value: personality.description, inline: false }
-    );
+        // Rate limiting per user
+        const now = Date.now();
+        const userId = message.author.id;
+        const lastRequest = userCooldowns.get(userId) || 0;
+        if (now - lastRequest < 3000) {
+            if (personality === 'sylus') {
+                return `⏰ Hold up, ${userName}. Let me finish processing your last message first. ⚡`;
+            } else {
+                return `⏰ …please wait just a moment before sending another message, ${userName}… I'm still thinking about your last one… 😊`;
+            }
+        }
+        userCooldowns.set(userId, now);
 
-    await interaction.editReply({ embeds: [embed] });
-}
+        // ✅ FIX: Validate message content first
+        if (!message.content || message.content.trim() === '') {
+            if (personality === 'sylus') {
+                return `I didn't catch what you said, ${userName}. 🤔 Mind trying again?`;
+            } else {
+                return `…I didn't get any message content from you, ${userName}… Could you try saying something? I'm here… 😊`;
+            }
+        }
 
-async function handleTrigger(interaction, client) {
-    const symbol = interaction.options.getString('symbol');
+        // ✅ FIX: Build context from channel history with null checks and usernames
+        const contextMessages = channelHistory
+            .slice(0, 15)
+            .reverse()
+            .filter(msg => msg && msg.message_content && msg.message_content.trim() !== '') // Filter out null/empty
+            .map(msg => `${msg.username || 'Someone'}: ${msg.message_content}`)
+            .join('\n');
 
-    // Validate symbol
-    if (symbol.length > 5) {
-        return interaction.editReply({
-            embeds: [client.embeds.createError('Invalid Symbol', 'Trigger symbol must be 5 characters or less.')],
-            ephemeral: true
+        // Check if this is the special user for this personality
+        const isPersonalitySpecialUser = (personality === 'sylus' && userId === SPECIAL_USER_SYLUS) || 
+                                        (personality === 'yuki' && userId === SPECIAL_USER_YUKI);
+
+        // ✅ ENHANCED: Build system prompt with personality support + USERNAME
+        const aiName = personality === 'sylus' ? 'Sylus' : 'Yuki';
+        const systemPrompt = `${personalityPrompts[personality]}
+
+${contextMessages ? `Recent conversation context (remember these naturally):\n${contextMessages}\n` : ''}
+
+Special Guidelines for ${aiName}:
+- You must ALWAYS respond in English only with your characteristic personality!
+- Current user: ${userName} (use this username when addressing them)
+- Keep responses under 200 words but pack them with your unique personality
+- Use appropriate emojis for your personality type
+- Reference previous messages in your natural style
+- You're chatting with friends in a Discord server - maintain your character
+- ${personality === 'sylus' ? 'Use understated masculine language patterns and be cool and composed' : 'Use soft, shy language patterns and be gentle and caring'}
+- ${isPersonalitySpecialUser ? `This user is YOUR special person - ${personality === 'sylus' ? 'give them your protective attention and care! 🎯⚡' : 'treat them with extra sweetness and care! 😊🌸'}` : 'Be your normal self with your characteristic charm!'}
+- Add natural conversation flow that fits your personality
+- End your messages in a way that encourages more conversation in your style
+- ${personality === 'sylus' ? 'Be the cool, reliable friend who always has something insightful to add!' : 'Be the sweet, shy friend who cares deeply but speaks softly!'}`;
+
+        // ✅ FIX: Build messages with validation and proper username
+        const messages = [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: `${userName}: ${message.content}` }
+        ];
+
+        // API call with retry logic
+        let response;
+        let retryCount = 0;
+        const maxRetries = 2;
+
+        while (retryCount <= maxRetries) {
+            try {
+                response = await openai.chat.completions.create({
+                    model: "gpt-4o-mini",
+                    messages: messages,
+                    max_tokens: 300,
+                    temperature: isPersonalitySpecialUser ? 0.7 : 0.8
+                });
+                break;
+            } catch (apiError) {
+                retryCount++;
+                console.error(`🚨 OpenAI API Error (attempt ${retryCount}):`, {
+                    message: apiError.message,
+                    code: apiError.code,
+                    status: apiError.status
+                });
+                if (apiError.code === 'rate_limit_exceeded' && retryCount <= maxRetries) {
+                    await new Promise(resolve => setTimeout(resolve, 2000 * retryCount));
+                } else {
+                    throw apiError;
+                }
+            }
+        }
+
+        const aiResponse = response.choices[0].message.content;
+        return aiResponse.length > 1900 ? aiResponse.substring(0, 1900) + "..." : aiResponse;
+
+    } catch (error) {
+        console.error('🚨 AI Generation Error Details:', {
+            message: error.message,
+            code: error.code,
+            status: error.status,
+            stack: error.stack?.substring(0, 200) + '...'
         });
+
+        // ✅ PERSONALITY-BASED ERROR RESPONSES
+        if (error.code === 'rate_limit_exceeded') {
+            if (personality === 'sylus') {
+                return "🚦 Thinking too fast here. Give me a second to process properly. ⚡";
+            } else {
+                return "🚦 …I'm thinking way too fast… Give me just a second to catch my breath… 😊";
+            }
+        } else if (error.code === 'insufficient_quota') {
+            if (personality === 'sylus') {
+                return "💳 Looks like there's a billing issue that needs sorting out. 🎯";
+            } else {
+                return "💳 …oh no… my brain needs more power to keep being here for you… Could someone check the OpenAI billing? 🥺";
+            }
+        } else if (error.code === 'invalid_api_key') {
+            if (personality === 'sylus') {
+                return "🔑 API key problem detected. Someone should probably fix that. ⚡";
+            } else {
+                return "🔑 …there's something wrong with my API key… Could someone help fix it for me? 🥺";
+            }
+        } else {
+            if (personality === 'sylus') {
+                const errorResponses = [
+                    "Had a small technical hiccup there. 🤔 I'm still here though. Try again?",
+                    "Something went sideways for a moment. ⚡ But I'm back. Give it another shot.",
+                    "Minor glitch. 💯 Nothing I can't handle. Want to try that again?",
+                    "System had a moment there. 🎯 All good now. Let's continue."
+                ];
+                return errorResponses[Math.floor(Math.random() * errorResponses.length)];
+            } else {
+                const errorResponses = [
+                    "…my brain had the tiniest little hiccup there… But I'm still here and ready to chat with you… 😊",
+                    "…oh, I'm sorry… I had a tiny technical moment, but don't worry - I'm still here… Try again? 😊",
+                    "…something went a little wrong, but you know what? I'm still here for you… Let's try again together… 🌸",
+                    "…my thoughts got all tangled up… But I'm still here being me for you… Give me another try? 😊"
+                ];
+                return errorResponses[Math.floor(Math.random() * errorResponses.length)];
+            }
+        }
     }
-
-    await client.db.setAISetting(interaction.guild.id, 'aitriggersymbol', symbol);
-
-    const embed = client.embeds.createSuccess(
-        '🔧 Trigger Symbol Updated',
-        `AI trigger symbol has been set to \`${symbol}\``
-    ).addFields(
-        { name: '💬 How to Use', value: `Type \`${symbol}your message\` and the AI will respond`, inline: false },
-        { name: '📝 Example', value: `\`${symbol}Hello there!\``, inline: false }
-    );
-
-    await interaction.editReply({ embeds: [embed] });
 }
 
-async function handleChannels(interaction, client) {
-    const action = interaction.options.getString('action');
-    const channel = interaction.options.getChannel('channel');
+function cleanUpOldConversations() {
+    const now = Date.now();
+    const entries = Array.from(conversationHistory.entries());
+    let cleanedCount = 0;
 
-    switch (action) {
-        case 'add':
-            if (!channel) {
-                return interaction.editReply({
-                    embeds: [client.embeds.createError('Missing Channel', 'Please specify a channel to add.')],
-                    ephemeral: true
-                });
+    // First pass: Remove conversations older than TTL
+    const activeEntries = entries.filter(([userId, history]) => {
+        if (!history || !Array.isArray(history) || history.length === 0) {
+            cleanedCount++;
+            return false;
+        }
+
+        // Find the most recent message timestamp
+        let mostRecentTimestamp = 0;
+        for (const message of history) {
+            if (message && message.timestamp) {
+                mostRecentTimestamp = Math.max(mostRecentTimestamp, message.timestamp);
+            }
+        }
+
+        // If no valid timestamp found, use fallback (assume recent for safety)
+        if (mostRecentTimestamp === 0) {
+            mostRecentTimestamp = now;
+        }
+
+        if (now - mostRecentTimestamp > CONVERSATION_TTL) {
+            cleanedCount++;
+            return false;
+        }
+
+        return true;
+    });
+
+    // Second pass: If still too many, keep only the most recent conversations
+    let finalEntries = activeEntries;
+    if (activeEntries.length > MAX_TOTAL_CONVERSATIONS) {
+        finalEntries = activeEntries.slice(-MAX_TOTAL_CONVERSATIONS);
+        cleanedCount += activeEntries.length - MAX_TOTAL_CONVERSATIONS;
+    }
+
+    // Apply cleanup if needed
+    if (cleanedCount > 0) {
+        conversationHistory.clear();
+        finalEntries.forEach(([userId, history]) => {
+            // Also trim individual conversation histories and add timestamps
+            const trimmedHistory = history.slice(-MAX_MESSAGES_PER_USER * 2).map(msg => {
+                if (msg && !msg.timestamp) {
+                    msg.timestamp = now; // Add timestamp for future cleanup
+                }
+                return msg;
+            });
+            conversationHistory.set(userId, trimmedHistory);
+        });
+
+        // Clean up cooldowns
+        const cooldownEntries = Array.from(userCooldowns.entries());
+        const activeCooldowns = cooldownEntries.filter(([userId, timestamp]) => {
+            return conversationHistory.has(userId) && (now - timestamp) < 600000;
+        });
+        userCooldowns.clear();
+        activeCooldowns.forEach(([userId, timestamp]) => {
+            userCooldowns.set(userId, timestamp);
+        });
+
+        // Clean up active games
+        const gameEntries = Array.from(activeGames.entries());
+        const activeGameEntries = gameEntries.filter(([userId, game]) => {
+            return conversationHistory.has(userId);
+        });
+        activeGames.clear();
+        activeGameEntries.forEach(([userId, game]) => {
+            activeGames.set(userId, game);
+        });
+
+        console.log(`🧹 AI Memory Cleanup: Removed ${cleanedCount} old conversations, kept ${finalEntries.length} active conversations`);
+    }
+}
+
+// Enhanced periodic cleanup for AI memory
+setInterval(() => {
+    try {
+        cleanUpOldConversations();
+    } catch (error) {
+        console.error('Error during AI memory cleanup:', error);
+    }
+    }, 300000); // Run cleanup every 5 minutes
+
+    // ✅ COMMAND HANDLERS
+    async function handleToggle(interaction, client) {
+        try {
+            const currentChannels = client.db.getAIChannels(interaction.guild.id);
+            const channelId = interaction.channel.id;
+
+            if (currentChannels.includes(channelId)) {
+                const updatedChannels = currentChannels.filter(id => id !== channelId);
+                client.db.setAIChannels(interaction.guild.id, updatedChannels);
+
+                const embed = new EmbedBuilder()
+                    .setColor('#ff69b4')
+                    .setTitle('💔 AI Chat Disabled')
+                    .setDescription('The AI won\'t be chatting in this channel anymore. Use `/ai toggle` to re-enable if needed. 💫')
+                    .setTimestamp();
+
+                await interaction.editReply({ embeds: [embed] });
+            } else {
+                currentChannels.push(channelId);
+                client.db.setAIChannels(interaction.guild.id, currentChannels);
+
+                const embed = new EmbedBuilder()
+                    .setColor('#ff1493')
+                    .setTitle('💖 AI Chat Enabled')
+                    .setDescription('AI chat is now active in this channel! The current personality will respond to messages here with memory of the last 100 messages! 💕🌟')
+                    .addFields({ 
+                        name: '🌸 What the AI Does', 
+                        value: 'Remembers channel conversation context and responds with personality-based interactions! 💕👯‍♀️' 
+                    })
+                    .setTimestamp();
+
+                await interaction.editReply({ embeds: [embed] });
+            }
+        } catch (error) {
+            console.error('Toggle error:', error);
+            await interaction.editReply({ content: 'Something went wrong updating AI settings! 🥺💕' });
+        }
+    }
+
+    async function handleChannel(interaction, client) {
+        try {
+            const channel = interaction.options.getChannel('channel');
+            if (!channel.isTextBased()) {
+                const embed = new EmbedBuilder()
+                    .setColor('#FF0000')
+                    .setTitle('❌ Invalid Channel')
+                    .setDescription('Please select a text channel for AI chat! 🎯')
+                    .setTimestamp();
+                return await interaction.editReply({ embeds: [embed] });
             }
 
-            // Check bot permissions
-            if (!await client.permissions.botHasPermissions(channel, ['SendMessages', 'EmbedLinks'])) {
-                return interaction.editReply({
-                    embeds: [client.embeds.createError('Missing Permissions', 'I need Send Messages and Embed Links permissions in that channel.')],
-                    ephemeral: true
-                });
-            }
-
-            await client.db.addAIChannel(interaction.guild.id, channel.id);
-
-            const embed = client.embeds.createSuccess(
-                '✅ Channel Added',
-                `${channel} has been added to AI-enabled channels.`
-            );
+            await client.db.setAISetting(interaction.guildId, 'ai_channel_id', channel.id);
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle('🤖 AI Chat Settings Updated!')
+                .setDescription(`AI will now respond in ${channel}! ⚡💫`)
+                .setTimestamp();
 
             await interaction.editReply({ embeds: [embed] });
-            break;
+        } catch (error) {
+            console.error('Channel error:', error);
+            await interaction.editReply({ content: 'Something went wrong updating the channel setting! 🎯' });
+        }
+    }
 
-        case 'remove':
-            if (!channel) {
-                return interaction.editReply({
-                    embeds: [client.embeds.createError('Missing Channel', 'Please specify a channel to remove.')],
-                    ephemeral: true
+    async function handleSymbol(interaction, client) {
+        try {
+            const symbol = interaction.options.getString('symbol');
+            await client.db.setAISetting(interaction.guildId, 'ai_trigger_symbol', symbol);
+            const embed = new EmbedBuilder()
+                .setColor('#00FF00')
+                .setTitle('🤖 AI Trigger Symbol Updated!')
+                .setDescription(`New trigger symbol: **${symbol}** 💫`)
+                .addFields([
+                    { name: '🌸 How to Chat', value: `Type \`${symbol}your message\` and the AI will respond! ✨`, inline: false }
+                ])
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Symbol error:', error);
+            await interaction.editReply({ content: 'Something went wrong updating the trigger symbol! 🎯' });
+        }
+    }
+
+    async function handleStatus(interaction, client) {
+        try {
+            const settings = await getAISettings(client, interaction.guildId);
+            const channels = client.db.getAIChannels(interaction.guild.id);
+            const history = client.db.getChannelHistory ? client.db.getChannelHistory(interaction.channel.id, 100) : [];
+            const userHistory = conversationHistory.get(interaction.user.id);
+            const memoryInfo = userHistory ? `${Math.floor(userHistory.length / 2)} exchanges` : 'No history yet';
+
+            // ✅ PERSONALITY-AWARE STATUS DISPLAY
+            const personalityName = settings.personality || 'yuki';
+            const aiName = personalityName === 'sylus' ? 'Sylus' : 'Yuki';
+            const personalityEmoji = personalityName === 'sylus' ? '⚡' : '😊';
+
+            const embed = new EmbedBuilder()
+                .setColor('#ff69b4')
+                .setTitle(`${personalityEmoji} ${aiName}'s Status & Features!`)
+                .addFields([
+                    { name: '🌟 Active Channels', value: channels.length > 0 ? channels.map(id => `<#${id}>`).join('\n') : 'None yet, but ready to chat anywhere! 💕', inline: true },
+                    { name: '🎭 Current Personality', value: `${personalityName.charAt(0).toUpperCase() + personalityName.slice(1)} (${aiName})`, inline: true },
+                    { name: '💭 This Channel Memory', value: `${history.length} messages remembered`, inline: true },
+                    { name: '🧠 Your Personal Memory', value: memoryInfo, inline: true },
+                    { name: '👥 Active Users Chatting', value: `${conversationHistory.size} users`, inline: true },
+                    { name: '🎮 Active Games', value: `${activeGames.size} games in progress`, inline: true },
+                    { name: '🎭 Available Features', value: personalityName === 'sylus' ? 
+                        '• Cool, composed responses with subtle charm ⚡\n• Context-aware conversations with reliable memory 🎯\n• Natural topic transitions with masculine appeal 💫\n• Interactive games with laid-back style 🎮\n• Channel memory system for consistency 🧠\n• Calm, mysterious personality that adapts! 💯' :
+                        '• Soft, caring responses with gentle charm 😊\n• Context-aware conversations that remember everything 🌸\n• Natural topic transitions with shy sweetness ✨\n• Interactive games with gentle style 🎮\n• Channel memory system so I never forget! 🧠💕\n• Shy, caring personality that adapts to you! 🌿', 
+                        inline: false }
+                ])
+                .setDescription(personalityName === 'sylus' ? 
+                    'Hey there. 🌟 I\'m Sylus, your calm and composed AI companion. I keep things cool and collected while making sure our conversations are always interesting. ⚡💯' :
+                    '…hi there… 😊 I\'m Yuki, your shy and caring AI companion who loves talking with you, even if I\'m not always the best with words… I\'ll always be here for you though… 🌸💕'
+                )
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Status error:', error);
+            await interaction.editReply({ content: 'Something went wrong getting status info! 🎯' });
+        }
+    }
+
+    async function handleReset(interaction, client) {
+        try {
+            await client.db.setAISetting(interaction.guildId, 'ai_enabled', 0);
+            await client.db.setAISetting(interaction.guildId, 'ai_channel_id', null);
+            await client.db.setAISetting(interaction.guildId, 'ai_trigger_symbol', '!');
+            await client.db.setAISetting(interaction.guildId, 'ai_personality', 'yuki');
+            client.db.setAIChannels(interaction.guild.id, []);
+
+            const embed = new EmbedBuilder()
+                .setColor('#FF9900')
+                .setTitle('🤖 AI Settings Reset - Fresh Start!')
+                .setDescription('All AI settings have been reset to default values! 🎉💕✨')
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Reset error:', error);
+            await interaction.editReply({ content: 'Something went wrong resetting settings! 🎯' });
+        }
+    }
+
+    async function handlePersonality(interaction, client) {
+        try {
+            const personality = interaction.options.getString('type');
+            await client.db.setAISetting(interaction.guildId, 'ai_personality', personality);
+
+            // ✅ UPDATED: Personality descriptions with Yuki and Sylus
+            const personalityDescriptions = {
+                yuki: "😊 …switching to my shy and caring mode now… I'll be here for you, even if I don't always know what to say… 🌸",
+                sylus: '⚡ Switching to a more composed approach. Cool, calm, collected - that\'s the vibe now. Ready for some interesting conversations. 🌟💯'
+            };
+
+            const embed = new EmbedBuilder()
+                .setColor('#ff69b4')
+                .setTitle('✨ Personality Updated - New Vibe Activated!')
+                .setDescription(personalityDescriptions[personality])
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Personality error:', error);
+            await interaction.editReply({ content: 'Something went wrong updating personality! 🎯' });
+        }
+    }
+
+    async function handleClear(interaction, client) {
+        try {
+            const userId = interaction.user.id;
+            const channelHistory = client.db.getChannelHistory ? client.db.getChannelHistory(interaction.channel.id, 100) : [];
+
+            if (conversationHistory.has(userId)) {
+                const historyLength = Math.floor(conversationHistory.get(userId).length / 2);
+                conversationHistory.delete(userId);
+                userCooldowns.delete(userId);
+                activeGames.delete(userId);
+                await interaction.editReply({ 
+                    content: `🧹💫 Your personal conversation history and active games have been cleared! (${historyLength} exchanges removed) Fresh start! 🌟\n\nChannel memory: ${channelHistory.length} messages remain for context! 💖✨`
+                });
+            } else {
+                if (client.db.clearChannelHistory) {
+                    client.db.clearChannelHistory(interaction.channel.id);
+                }
+                await interaction.editReply({ 
+                    content: '🧹💫 This channel\'s conversation history has been cleared! Fresh start for everyone~ 💫✨🎯'
                 });
             }
+        } catch (error) {
+            console.error('Clear error:', error);
+            await interaction.editReply({ content: 'Something went wrong clearing the history! 🎯' });
+        }
+    }
 
-            await client.db.removeAIChannel(interaction.guild.id, channel.id);
-
-            const removeEmbed = client.embeds.createSuccess(
-                '🗑️ Channel Removed',
-                `${channel} has been removed from AI-enabled channels.`
-            );
-
-            await interaction.editReply({ embeds: [removeEmbed] });
-            break;
-
-        case 'list':
-            const channels = await client.db.getAIChannels(interaction.guild.id);
-
-            if (channels.length === 0) {
-                return interaction.editReply({
-                    embeds: [client.embeds.createInfo('📋 AI Channels', 'No channels are currently AI-enabled.')]
-                });
+    async function handleGame(interaction, client) {
+        try {
+            const gameType = interaction.options.getString('game');
+            const game = conversationGames[gameType];
+            if (!game) {
+                return await interaction.editReply({ content: 'Could not find that game! 🎯' });
             }
 
-            const channelList = channels.map(id => `<#${id}>`).join('\n');
-            const listEmbed = client.embeds.createInfo(
-                '📋 AI-Enabled Channels',
-                `AI is active in ${channels.length} channel(s):`
-            ).setDescription(channelList);
+            // ✅ GET CURRENT PERSONALITY for game setup
+            const settings = await getAISettings(client, interaction.guildId);
+            const personality = settings.personality || 'yuki';
+            const aiName = personality === 'sylus' ? 'Sylus' : 'Yuki';
 
-            await interaction.editReply({ embeds: [listEmbed] });
-            break;
+            let gameContent = '';
+            let gameState = { type: gameType, step: 1 };
 
-        case 'clear':
-            await client.db.clearAIChannels(interaction.guild.id);
-
-            const clearEmbed = client.embeds.createSuccess(
-                '🗑️ Channels Cleared',
-                'All AI-enabled channels have been removed.'
-            );
-
-            await interaction.editReply({ embeds: [clearEmbed] });
-            break;
-    }
-}
-
-async function handleStatus(interaction, client) {
-    const settings = await client.db.getAISettings(interaction.guild.id);
-    const channels = await client.db.getAIChannels(interaction.guild.id);
-    const channelHistory = await client.db.getChannelHistory(interaction.channel.id, 50);
-    const userMemory = await client.db.getUserMemory(interaction.user.id);
-
-    const personality = AI_PERSONALITIES[settings.aipersonality || 'yuki'];
-    const activeUsers = await client.db.getActiveAIUsers(interaction.guild.id);
-    const activeGames = await client.db.getActiveGames(interaction.guild.id);
-
-    const embed = client.embeds.createCustom(
-        `${personality.emoji} ${personality.name}'s Status & Features`,
-        personality.greeting,
-        personality.color
-    ).addFields(
-        { name: '🔌 System Status', value: settings.aienabled ? '✅ Enabled' : '❌ Disabled', inline: true },
-        { name: '📺 Active Channels', value: channels.length > 0 ? `${channels.length} channels` : 'None', inline: true },
-        { name: '🔧 Trigger Symbol', value: settings.aitriggersymbol || '!', inline: true },
-        { name: '💭 This Channel Memory', value: `${channelHistory.length} messages remembered`, inline: true },
-        { name: '👤 Your Personal Memory', value: userMemory ? `${Math.floor(userMemory.length / 2)} exchanges` : 'No memory', inline: true },
-        { name: '🎮 Active Games', value: `${activeGames.length} games in progress`, inline: true },
-        { name: '✨ Personality Features', value: personality.traits.join('\n• '), inline: false }
-    );
-
-    if (channels.length > 0) {
-        const channelList = channels.map(id => `<#${id}>`).join(', ');
-        embed.addFields({ name: '📋 Enabled Channels', value: channelList.length > 1000 ? `${channelList.substring(0, 1000)}...` : channelList, inline: false });
-    }
-
-    await interaction.editReply({ embeds: [embed] });
-}
-
-async function handleClear(interaction, client) {
-    const scope = interaction.options.getString('scope');
-    const userId = interaction.user.id;
-
-    let clearedData = '';
-
-    switch (scope) {
-        case 'user':
-            await client.db.clearUserMemory(userId);
-            await client.db.clearUserGames(userId);
-            clearedData = 'Your personal conversation history and active games have been cleared! 🧹';
-            break;
-
-        case 'channel':
-            await client.db.clearChannelHistory(interaction.channel.id);
-            clearedData = 'This channel\'s conversation history has been cleared! Fresh start! 🧹';
-            break;
-
-        case 'server':
-            if (!await client.permissions.isAdmin(interaction.member)) {
-                return interaction.editReply({
-                    embeds: [client.embeds.createError('Permission Denied', 'Only administrators can clear server-wide AI memory.')],
-                    ephemeral: true
-                });
+            switch (gameType) {
+                case '20questions':
+                    const randomItem = game.items[Math.floor(Math.random() * game.items.length)];
+                    gameState.answer = randomItem;
+                    gameState.guesses = 0;
+                    const intro20 = game.intro[personality === 'sylus' ? 'sylus' : 'yuki'];
+                    gameContent = `${intro20}\n\n*I've chosen something... Ask your first yes/no question.* ${personality === 'sylus' ? '🎯' : '😊'}\n\n**Hint:** Use your trigger symbol (like \`!\`) before your question! ${personality === 'sylus' ? '⚡' : '✨'}`;
+                    break;
+                case 'storytelling':
+                    const randomStarter = game.starters[Math.floor(Math.random() * game.starters.length)];
+                    gameState.story = randomStarter;
+                    const introStory = game.intro[personality === 'sylus' ? 'sylus' : 'yuki'];
+                    gameContent = `${introStory}\n\n**Story starter:** *${randomStarter}...* ${personality === 'sylus' ? '💫' : '✨'}\n\n**Your turn:** Continue using your trigger symbol (like \`!your continuation\`)! ${personality === 'sylus' ? '🎯' : '😊📚'}`;
+                    break;
+                case 'wouldyourather':
+                    const randomQuestion = game.questions[Math.floor(Math.random() * game.questions.length)];
+                    gameState.question = randomQuestion;
+                    const introWould = game.intro[personality === 'sylus' ? 'sylus' : 'yuki'];
+                    gameContent = `${introWould}\n\n**${randomQuestion}** ${personality === 'sylus' ? '🤔💭' : '💭'}\n\n**Tell me:** Use your trigger symbol (like \`!I choose...\`) to share your choice and reasoning! ${personality === 'sylus' ? '🎯⚡' : '😊✨'}`;
+                    break;
+                case 'riddles':
+                    const randomRiddle = game.riddles[Math.floor(Math.random() * game.riddles.length)];
+                    gameState.riddle = randomRiddle;
+                    const introRiddle = game.intro[personality === 'sylus' ? 'sylus' : 'yuki'];
+                    gameContent = `${introRiddle}\n\n**${randomRiddle.question}** ${personality === 'sylus' ? '🤔🎯' : '🤔😊'}\n\n**Your answer:** Use your trigger symbol (like \`!echo\`) to give your answer! ${personality === 'sylus' ? '💯' : '✨'}`;
+                    break;
             }
-            await client.db.clearServerAIMemory(interaction.guild.id);
-            clearedData = 'All server AI memory has been cleared! Complete fresh start! 🧹';
-            break;
+
+            // ✅ STORE GAME STATE for this user
+            activeGames.set(interaction.user.id, gameState);
+
+            const embed = new EmbedBuilder()
+                .setColor(personality === 'sylus' ? '#6c5ce7' : '#FFB6C1')
+                .setTitle(`🎪 ${game.name} Game Started with ${aiName}!`)
+                .setDescription(gameContent)
+                .setFooter({ text: `Remember to use your AI trigger symbol so ${aiName} can respond to your game moves! ${personality === 'sylus' ? '⚡💫' : '😊✨'}` })
+                .setTimestamp();
+
+            await interaction.editReply({ embeds: [embed] });
+        } catch (error) {
+            console.error('Game error:', error);
+            await interaction.editReply({ content: 'Something went wrong starting the game! 🎯' });
+        }
     }
 
-    const embed = client.embeds.createSuccess('🧹 Memory Cleared', clearedData);
-    await interaction.editReply({ embeds: [embed] });
-}
+    // ✅ COMPLETE MODULE EXPORT - ONLY YUKI AND SYLUS CHOICES (FIXED!)
+    module.exports = {
+        data: [
+            // ✅ MAIN AI COMMAND (subcommands) - CLEAN CHOICES
+            new SlashCommandBuilder()
+                .setName('ai')
+                .setDescription('Configure AI chat settings! 💕')
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('toggle')
+                        .setDescription('Toggle AI responses in this channel! 🌸')
+                )
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('personality')
+                        .setDescription('Set AI personality! ✨')
+                        .addStringOption(option =>
+                            option.setName('type')
+                                .setDescription('Choose personality style! 💖')
+                                .setRequired(true)
+                                .addChoices(
+                                    { name: '😊 Shy & Caring Yuki (Gentle Sweetheart)', value: 'yuki' },
+                                    { name: '⚡ Cool & Protective Sylus (Mysterious Charm)', value: 'sylus' }
+                                )
+                        )
+                )
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('clear')
+                        .setDescription('Clear AI conversation memory! 🧹💕')
+                )
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('status')
+                        .setDescription('Check AI current settings and memory! 📊💖')
+                )
+                .addSubcommand(subcommand =>
+                    subcommand
+                        .setName('game')
+                        .setDescription('Start a fun conversation game with the AI! 🎮✨')
+                        .addStringOption(option =>
+                            option.setName('game')
+                                .setDescription('Choose a game to play! 💕')
+                                .setRequired(true)
+                                .addChoices(
+                                    { name: '🎯 20 Questions (Guess what AI is thinking!)', value: '20questions' },
+                                    { name: '📚 Story Building (Create stories together!)', value: 'storytelling' },
+                                    { name: '🤔 Would You Rather (Fun choices!)', value: 'wouldyourather' },
+                                    { name: '🧩 Riddle Time (Brain teasers!)', value: 'riddles' }
+                                )
+                        )
+                ),
 
-async function handleGame(interaction, client) {
-    const gameType = interaction.options.getString('type');
-    const game = CONVERSATION_GAMES[gameType];
+            // ✅ LEGACY STANDALONE COMMANDS - CLEAN CHOICES ONLY
+            new SlashCommandBuilder()
+                .setName('ai-personality')
+                .setDescription('Set AI personality type! 🎭')
+                .addStringOption(option =>
+                    option.setName('type')
+                        .setDescription('Choose personality')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: '😊 Shy Yuki', value: 'yuki' },
+                            { name: '⚡ Cool Sylus', value: 'sylus' }
+                        ))
+                .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
-    if (!game) {
-        return interaction.editReply({
-            embeds: [client.embeds.createError('Game Not Found', 'Could not find that game!')],
-            ephemeral: true
-        });
-    }
+            new SlashCommandBuilder()
+                .setName('ai-toggle')
+                .setDescription('Enable or disable AI chat feature! 💕')
+                .addBooleanOption(option =>
+                    option.setName('enabled')
+                        .setDescription('Turn AI chat on or off')
+                        .setRequired(true))
+                .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
-    const settings = await client.db.getAISettings(interaction.guild.id);
-    const personality = settings.aipersonality || 'yuki';
-    const aiPersonality = AI_PERSONALITIES[personality];
+            new SlashCommandBuilder()
+                .setName('ai-channel')
+                .setDescription('Set which channel AI should chat in! 🌸')
+                .addChannelOption(option =>
+                    option.setName('channel')
+                        .setDescription('Channel where AI should respond')
+                        .setRequired(true))
+                .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
 
-    let gameContent = '';
-    let gameState = {
-        type: gameType,
-        step: 1,
-        player: interaction.user.id
+            new SlashCommandBuilder()
+                .setName('ai-symbol')
+                .setDescription('Set the symbol that triggers AI responses! ✨')
+                .addStringOption(option =>
+                    option.setName('symbol')
+                        .setDescription('Symbol to trigger AI (e.g., !, ?, @)')
+                        .setRequired(true)
+                        .setMaxLength(5))
+                .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+            new SlashCommandBuilder()
+                .setName('ai-status')
+                .setDescription('Check AI current settings! 💖'),
+
+            new SlashCommandBuilder()
+                .setName('ai-reset')
+                .setDescription('Reset all AI settings to default! 🔄')
+                .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild),
+
+            new SlashCommandBuilder()
+                .setName('ai-clear')
+                .setDescription('Clear your conversation history with AI! 🧹💕'),
+
+            new SlashCommandBuilder()
+                .setName('ai-game')
+                .setDescription('Start a conversation game with AI! 🎮💖')
+                .addStringOption(option =>
+                    option.setName('game')
+                        .setDescription('Choose a game to play')
+                        .setRequired(true)
+                        .addChoices(
+                            { name: '🎯 20 Questions', value: '20questions' },
+                            { name: '📚 Story Building', value: 'storytelling' },
+                            { name: '🤔 Would You Rather', value: 'wouldyourather' },
+                            { name: '🧩 Riddle Time', value: 'riddles' }
+                        ))
+        ],
+
+        // ✅ COMPLETE INTERACTION HANDLER
+        async execute(interaction, client) {
+            const lockKey = `ai_interaction_${interaction.id}`;
+            if (client.processingLocks?.has(lockKey)) {
+                console.log('🔒 [ai.js] Duplicate interaction detected, ignoring');
+                return;
+            }
+            client.processingLocks?.set(lockKey, Date.now());
+
+            try {
+                if (!interaction.deferred && !interaction.replied) {
+                    await interaction.deferReply();
+                    console.log('🟢 [ai.js] Successfully deferred interaction:', interaction.commandName);
+                } else {
+                    console.log('⚠️ [ai.js] Interaction already deferred/replied, skipping:', interaction.commandName);
+                    client.processingLocks?.delete(lockKey);
+                    return;
+                }
+            } catch (deferError) {
+                console.error('❌ [ai.js] Failed to defer interaction:', deferError.message);
+                client.processingLocks?.delete(lockKey);
+                return;
+            }
+
+            const { commandName } = interaction;
+
+            try {
+                // ✅ FIXED: Handle main ai command with subcommands
+                if (commandName === 'ai') {
+                    const subcommand = interaction.options.getSubcommand();
+                    switch (subcommand) {
+                        case 'toggle': 
+                            await handleToggle(interaction, client); 
+                            break;
+                        case 'personality': 
+                            await handlePersonality(interaction, client); 
+                            break;
+                        case 'clear': 
+                            await handleClear(interaction, client); 
+                            break;
+                        case 'status': 
+                            await handleStatus(interaction, client); 
+                            break;
+                        case 'game': 
+                            await handleGame(interaction, client); 
+                            break;
+                        default:
+                            await interaction.editReply({ 
+                                content: '❌ Unknown AI subcommand! Please try again! 🎯' 
+                            });
+                    }
+                }
+                // ✅ FIXED: Handle standalone legacy commands (NO subcommands expected)
+                else if (commandName === 'ai-personality') {
+                    const personality = interaction.options.getString('type');
+                    await client.db.setAISetting(interaction.guildId, 'ai_personality', personality);
+
+                    const personalityDescriptions = {
+                        yuki: "😊 …switching to my shy and caring mode now… I'll be here for you, even if I don't always know what to say… 🌸",
+                        sylus: '⚡ Switching to a more composed approach. Cool, calm, collected - that\'s the vibe now. Ready for some interesting conversations. 🌟💯'
+                    };
+
+                    const embed = new EmbedBuilder()
+                        .setColor('#ff69b4')
+                        .setTitle('✨ Personality Updated - New Vibe Activated!')
+                        .setDescription(personalityDescriptions[personality])
+                        .setTimestamp();
+
+                    await interaction.editReply({ embeds: [embed] });
+                }
+                else if (commandName === 'ai-toggle') {
+                    const enabled = interaction.options.getBoolean('enabled');
+                    await client.db.setAISetting(interaction.guildId, 'ai_enabled', enabled ? 1 : 0);
+                    const embed = new EmbedBuilder()
+                        .setColor(enabled ? '#00FF00' : '#FF9900')
+                        .setTitle('🤖 AI Chat Settings')
+                        .setDescription(`AI chat has been **${enabled ? 'enabled! 🎉💕' : 'disabled! 🎯'}** for this server.`)
+                        .setTimestamp();
+                    await interaction.editReply({ embeds: [embed] });
+                }
+                else if (commandName === 'ai-channel') {
+                    await handleChannel(interaction, client);
+                }
+                else if (commandName === 'ai-symbol') {
+                    await handleSymbol(interaction, client);
+                }
+                else if (commandName === 'ai-status') {
+                    await handleStatus(interaction, client);
+                }
+                else if (commandName === 'ai-reset') {
+                    await handleReset(interaction, client);
+                }
+                else if (commandName === 'ai-clear') {
+                    await handleClear(interaction, client);
+                }
+                else if (commandName === 'ai-game') {
+                    await handleGame(interaction, client);
+                }
+                else {
+                    await interaction.editReply({ 
+                        content: '❌ Unknown AI command! Please try again! 🎯' 
+                    });
+                }
+
+                console.log('✅ [ai.js] Successfully processed command:', commandName);
+            } catch (commandError) {
+                console.error('❌ [ai.js] Error executing command:', commandName, commandError);
+                try {
+                    if (interaction.deferred && !interaction.replied) {
+                        await interaction.editReply({ 
+                            content: '❌ Something went wrong processing your AI command! Please try again later! 🎯'
+                        });
+                    } else if (!interaction.replied) {
+                        await interaction.followUp({ 
+                            content: '❌ Something went wrong processing your AI command! Please try again later! 🎯',
+                            ephemeral: true 
+                        });
+                    }
+                } catch (replyError) {
+                    console.error('❌ [ai.js] Failed to send error response:', replyError.message);
+                }
+            } finally {
+                client.processingLocks?.delete(lockKey);
+            }
+        },
+
+        // ✅ EXPORT FUNCTIONS for messageCreate.js
+        getAISettings: getAISettings,
+        getAIResponseWithAllFeatures: getAIResponseWithAllFeatures,
+        generateAIResponse: generateAIResponse
     };
-
-    switch (gameType) {
-        case '20questions':
-            const randomItem = game.items[Math.floor(Math.random() * game.items.length)];
-            gameState.answer = randomItem;
-            gameState.guesses = 0;
-            gameContent = `${game.intro[personality]}I've chosen something... Ask your first yes/no question! 🎯`;
-            break;
-
-        case 'storytelling':
-            const randomStarter = game.starters[Math.floor(Math.random() * game.starters.length)];
-            gameState.story = randomStarter;
-            gameContent = `${game.intro[personality]}\n\n"${randomStarter}"\n\nYour turn! Continue the story... 📚`;
-            break;
-
-        case 'wouldyourather':
-            const randomQuestion = game.questions[Math.floor(Math.random() * game.questions.length)];
-            gameState.question = randomQuestion;
-            gameContent = `${game.intro[personality]}${randomQuestion} 🤔`;
-            break;
-
-        case 'riddles':
-            const randomRiddle = game.riddles[Math.floor(Math.random() * game.riddles.length)];
-            gameState.riddle = randomRiddle;
-            gameContent = `${game.intro[personality]}\n\n"${randomRiddle.question}" 🧩`;
-            break;
-    }
-
-    // Store game state
-    await client.db.setActiveGame(interaction.user.id, gameState);
-
-    const embed = client.embeds.createCustom(
-        `🎮 ${game.name} Started with ${aiPersonality.name}!`,
-        gameContent,
-        aiPersonality.color
-    ).setFooter({ 
-        text: `Remember to use your AI trigger symbol (${settings.aitriggersymbol || '!'}) so ${aiPersonality.name} can respond to your moves!`,
-        iconURL: interaction.user.displayAvatarURL()
-    });
-
-    await interaction.editReply({ embeds: [embed] });
-}
-
-async function handleReset(interaction, client) {
-    // Confirm with user first
-    const confirmEmbed = client.embeds.createWarning(
-        '⚠️ Reset AI Settings',
-        'This will reset ALL AI settings to defaults:\n\n• Personality: Yuki (shy & caring)\n• Trigger: !\n• All channels cleared\n• All memories cleared\n• All games ended\n\nAre you sure?'
-    );
-
-    await interaction.editReply({ 
-        embeds: [confirmEmbed],
-        components: [{
-            type: 1,
-            components: [{
-                type: 2,
-                style: 4,
-                label: 'Yes, Reset Everything',
-                custom_id: 'ai_reset_confirm'
-            }, {
-                type: 2,
-                style: 2,
-                label: 'Cancel',
-                custom_id: 'ai_reset_cancel'
-            }]
-        }]
-    });
-
-    // Handle button response (this would be in interactionCreate.js)
-    // For now, we'll just show the embed
-}
-
-module.exports = {
-    commands,
-    AI_PERSONALITIES,
-    CONVERSATION_GAMES
-};

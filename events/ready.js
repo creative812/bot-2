@@ -1,58 +1,51 @@
-/**
- * events/ready.js
- * Rotates bot presence with dynamic activity messages
- * Logs the activity type as string instead of numeric enum value
- */
-
 const { ActivityType } = require('discord.js');
 
-// Mapping enum numeric values back to string keys
-const activityTypeNames = Object.entries(ActivityType).reduce((acc, [key, val]) => {
-  acc[val] = key;
-  return acc;
-}, {});
-
 module.exports = {
-  name: 'ready',
-  once: true,
-  async execute(client) {
-    try {
-      client.logger.info(`Bot started as ${client.user.tag} (ID: ${client.user.id})`);
-      client.logger.info(`Connected to ${client.guilds.cache.size} guild(s)`);
+    name: 'clientReady',  
+    once: true,
+    execute(client) {
+        console.log('🟡 [ready.js] Handler fired');
 
-      const activities = [
-        { type: ActivityType.Playing,    text: () => `with ${client.guilds.cache.size} servers` },
-        { type: ActivityType.Listening,  text: () => `/help for commands` },
-        { type: ActivityType.Watching,   text: () => `${client.guilds.cache.size} communities` },
-        { type: ActivityType.Competing,  text: () => `in coding challenges` }
-      ];
+        client.logger.success(`Bot logged in as ${client.user.tag}!`);
+        client.logger.info(`Ready to serve ${client.guilds.cache.size} server(s) and ${client.users.cache.size} user(s)`);
 
-      let index = 0;
+        // Set bot activity
+        const activities = [
+            { name: 'for rule violations', type: ActivityType.Watching },
+            { name: `${client.config.prefix}help for commands`, type: ActivityType.Listening },
+            { name: `over ${client.guilds.cache.size} servers`, type: ActivityType.Watching },
+            { name: 'Discord moderation', type: ActivityType.Playing }
+        ];
+        let currentActivity = 0;
 
-      const updateStatus = async () => {
-        const activity = activities[index];
-        index = (index + 1) % activities.length;
+        const updateActivity = () => {
+            client.user.setActivity(activities[currentActivity]);
+            currentActivity = (currentActivity + 1) % activities.length;
+        };
 
+        // Set initial activity
+        updateActivity();
+
+        // Change activity every 5 minutes to avoid rate limits
+        setInterval(updateActivity, 300000);
+
+        // Log some startup statistics
+        client.logger.info(`Commands loaded: ${client.commands.size}`);
+        client.logger.info(`Bot latency: ${Math.round(client.ws.ping)}ms`);
+
+        // Database cleanup on startup
         try {
-          await client.user.setPresence({
-            activities: [{ name: activity.text(), type: activity.type }],
-            status: 'online'
-          });
-          const typeName = activityTypeNames[activity.type] || 'Unknown';
-          client.logger.debug(`Presence updated: ${typeName} "${activity.text()}"`);
+            client.db.cleanupOldData();
+            client.logger.info('Database cleanup completed');
         } catch (error) {
-          client.logger.warn('Failed to set presence:', error.message);
+            client.logger.error('Database cleanup failed:', error);
         }
-      };
 
-      await updateStatus();
-
-      if (client.statusInterval) clearInterval(client.statusInterval);
-      client.statusInterval = setInterval(updateStatus, 120000);
-
-      client.logger.info('Bot is fully ready and rotating status.');
-    } catch (error) {
-      client.logger.error('Error in ready event:', error);
+        // Log cleanup on startup
+        try {
+            client.logger.cleanup(30); // Keep logs for 30 days
+        } catch (error) {
+            client.logger.error('Log cleanup failed:', error);
+        }
     }
-  }
 };

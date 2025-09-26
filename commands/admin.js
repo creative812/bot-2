@@ -1,25 +1,18 @@
-const { SlashCommandBuilder, PermissionFlagsBits, AttachmentBuilder } = require('discord.js');
-
-/**
- * Admin Commands - Clean and Modular Structure
- * 
- * This file contains all admin-level commands with:
- * - Consistent error handling
- * - Proper permission validation
- * - Clean code structure
- * - Centralized database calls (to be connected via services)
- * - Modular command definitions
- */
+const { SlashCommandBuilder, AttachmentBuilder } = require('discord.js');
+const PermissionManager = require('../utils/permissions.js');
+const EmbedManager = require('../utils/embeds.js');
+const TimeParser = require('../utils/timeParser.js');
+const fs = require('fs');
 
 const commands = [
     {
         name: 'settings',
-        description: 'Manage server settings and configuration',
-        permissions: 'admin',
+        description: 'Manage server settings',
+        permissions: ['admin'],
         data: new SlashCommandBuilder()
             .setName('settings')
-            .setDescription('Manage server settings and configuration')
-            .addSubcommand(subcommand => 
+            .setDescription('Manage server settings')
+            .addSubcommand(subcommand =>
                 subcommand
                     .setName('view')
                     .setDescription('View current server settings'))
@@ -28,9 +21,8 @@ const commands = [
                     .setName('prefix')
                     .setDescription('Set the command prefix')
                     .addStringOption(option =>
-                        option
-                            .setName('prefix')
-                            .setDescription('New command prefix (max 5 characters)')
+                        option.setName('prefix')
+                            .setDescription('New command prefix')
                             .setMaxLength(5)
                             .setRequired(true)))
             .addSubcommand(subcommand =>
@@ -38,116 +30,218 @@ const commands = [
                     .setName('log-channel')
                     .setDescription('Set the moderation log channel')
                     .addChannelOption(option =>
-                        option
-                            .setName('channel')
+                        option.setName('channel')
                             .setDescription('Channel for moderation logs')
                             .setRequired(false)))
             .addSubcommand(subcommand =>
                 subcommand
                     .setName('welcome-channel')
-                    .setDescription('Set the welcome/leave channel')
+                    .setDescription('Set the welcome channel')
                     .addChannelOption(option =>
-                        option
-                            .setName('channel')
-                            .setDescription('Channel for welcome/leave messages')
+                        option.setName('channel')
+                            .setDescription('Channel for welcome messages')
                             .setRequired(false)))
             .addSubcommand(subcommand =>
                 subcommand
                     .setName('welcome-message')
-                    .setDescription('Set custom welcome message')
+                    .setDescription('Set the welcome message')
                     .addStringOption(option =>
-                        option
-                            .setName('message')
+                        option.setName('message')
                             .setDescription('Welcome message (use {user} for mention, {server} for server name)')
                             .setMaxLength(1000)
                             .setRequired(false)))
             .addSubcommand(subcommand =>
                 subcommand
                     .setName('leave-message')
-                    .setDescription('Set custom leave message')
+                    .setDescription('Set the leave message')
                     .addStringOption(option =>
-                        option
-                            .setName('message')
+                        option.setName('message')
                             .setDescription('Leave message (use {user} for username, {server} for server name)')
                             .setMaxLength(1000)
                             .setRequired(false)))
             .addSubcommand(subcommand =>
                 subcommand
                     .setName('embed-color')
-                    .setDescription('Set default embed color')
+                    .setDescription('Set the default embed color')
                     .addStringOption(option =>
-                        option
-                            .setName('color')
-                            .setDescription('Hex color code (e.g., 7289DA)')
+                        option.setName('color')
+                            .setDescription('Hex color code (e.g., #7289DA)')
                             .setRequired(true)))
             .addSubcommand(subcommand =>
                 subcommand
                     .setName('automod')
-                    .setDescription('Toggle auto-moderation system')
+                    .setDescription('Toggle auto-moderation')
                     .addBooleanOption(option =>
-                        option
-                            .setName('enabled')
+                        option.setName('enabled')
                             .setDescription('Enable or disable auto-moderation')
                             .setRequired(true))),
-
         async execute(interaction, client) {
-            // Permission check will be handled by PermissionService
-            if (!await client.permissions.isAdmin(interaction.member)) {
-                return interaction.reply({
-                    embeds: [client.embeds.createError('Permission Denied', 'You need administrator permissions to use this command.')],
-                    ephemeral: true
+            if (!PermissionManager.isAdmin(interaction.member)) {
+                return interaction.reply({ 
+                    embeds: [EmbedManager.createErrorEmbed('Permission Denied', 'You need administrator permissions to use this command.')], 
+                    ephemeral: true 
                 });
             }
 
             const subcommand = interaction.options.getSubcommand();
 
             try {
-                switch (subcommand) {
-                    case 'view':
-                        await handleViewSettings(interaction, client);
-                        break;
-                    case 'prefix':
-                        await handleSetPrefix(interaction, client);
-                        break;
-                    case 'log-channel':
-                        await handleLogChannel(interaction, client);
-                        break;
-                    case 'welcome-channel':
-                        await handleWelcomeChannel(interaction, client);
-                        break;
-                    case 'welcome-message':
-                        await handleWelcomeMessage(interaction, client);
-                        break;
-                    case 'leave-message':
-                        await handleLeaveMessage(interaction, client);
-                        break;
-                    case 'embed-color':
-                        await handleEmbedColor(interaction, client);
-                        break;
-                    case 'automod':
-                        await handleAutomod(interaction, client);
-                        break;
+                if (subcommand === 'view') {
+                    const settings = client.db.getGuildSettings(interaction.guild.id) || {};
+
+                    const logChannel = settings.log_channel_id ? `<#${settings.log_channel_id}>` : 'Not set';
+                    const welcomeChannel = settings.welcome_channel_id ? `<#${settings.welcome_channel_id}>` : 'Not set';
+                    const autoRole = settings.auto_role_id ? `<@&${settings.auto_role_id}>` : 'Not set';
+
+                    const embed = EmbedManager.createEmbed('⚙️ Server Settings', 'Current configuration for this server')
+                        .addFields([
+                            { name: 'Prefix', value: settings.prefix || '!', inline: true },
+                            { name: 'Log Channel', value: logChannel, inline: true },
+                            { name: 'Welcome Channel', value: welcomeChannel, inline: true },
+                            { name: 'Auto Role', value: autoRole, inline: true },
+                            { name: 'Embed Color', value: settings.embed_color || '#7289DA', inline: true },
+                            { name: 'Auto-Moderation', value: settings.automod_enabled ? 'Enabled' : 'Disabled', inline: false },
+                            { name: 'Welcome Message', value: settings.welcome_message || 'Default message', inline: false },
+                            { name: 'Leave Message', value: settings.leave_message || 'Default message', inline: false }
+                        ]);
+
+                    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+                } else if (subcommand === 'prefix') {
+                    const newPrefix = interaction.options.getString('prefix');
+
+                    if (newPrefix.length > 5) {
+                        return interaction.reply({ 
+                            embeds: [EmbedManager.createErrorEmbed('Invalid Prefix', 'Prefix must be 5 characters or less.')], 
+                            ephemeral: true 
+                        });
+                    }
+
+                    client.db.setGuildSetting(interaction.guild.id, 'prefix', newPrefix);
+
+                    const embed = EmbedManager.createSuccessEmbed('Prefix Updated', 
+                        `Command prefix has been set to: \`${newPrefix}\``);
+
+                    await interaction.reply({ embeds: [embed] });
+
+                } else if (subcommand === 'log-channel') {
+                    const channel = interaction.options.getChannel('channel');
+
+                    if (channel) {
+                        // Check if bot can send messages in the channel
+                        if (!PermissionManager.botHasPermissions(channel, ['SendMessages', 'EmbedLinks'])) {
+                            return interaction.reply({ 
+                                embeds: [EmbedManager.createErrorEmbed('Missing Permissions', `I need "Send Messages" and "Embed Links" permissions in ${channel}.`)], 
+                                ephemeral: true 
+                            });
+                        }
+
+                        client.db.setGuildSetting(interaction.guild.id, 'log_channel_id', channel.id);
+
+                        const embed = EmbedManager.createSuccessEmbed('Log Channel Set', 
+                            `Moderation logs will now be sent to ${channel}.`);
+
+                        await interaction.reply({ embeds: [embed] });
+                    } else {
+                        client.db.setGuildSetting(interaction.guild.id, 'log_channel_id', null);
+
+                        const embed = EmbedManager.createSuccessEmbed('Log Channel Removed', 
+                            'Moderation logging has been disabled.');
+
+                        await interaction.reply({ embeds: [embed] });
+                    }
+
+                } else if (subcommand === 'welcome-channel') {
+                    const channel = interaction.options.getChannel('channel');
+
+                    if (channel) {
+                        if (!PermissionManager.botHasPermissions(channel, ['SendMessages', 'EmbedLinks'])) {
+                            return interaction.reply({ 
+                                embeds: [EmbedManager.createErrorEmbed('Missing Permissions', `I need "Send Messages" and "Embed Links" permissions in ${channel}.`)], 
+                                ephemeral: true 
+                            });
+                        }
+
+                        client.db.setGuildSetting(interaction.guild.id, 'welcome_channel_id', channel.id);
+
+                        const embed = EmbedManager.createSuccessEmbed('Welcome Channel Set', 
+                            `Welcome and leave messages will now be sent to ${channel}.`);
+
+                        await interaction.reply({ embeds: [embed] });
+                    } else {
+                        client.db.setGuildSetting(interaction.guild.id, 'welcome_channel_id', null);
+
+                        const embed = EmbedManager.createSuccessEmbed('Welcome Channel Removed', 
+                            'Welcome and leave messages have been disabled.');
+
+                        await interaction.reply({ embeds: [embed] });
+                    }
+
+                } else if (subcommand === 'welcome-message') {
+                    const message = interaction.options.getString('message');
+
+                    client.db.setGuildSetting(interaction.guild.id, 'welcome_message', message);
+
+                    const embed = EmbedManager.createSuccessEmbed('Welcome Message Updated', 
+                        message ? `Welcome message set to:\n${message}` : 'Welcome message reset to default.');
+
+                    await interaction.reply({ embeds: [embed] });
+
+                } else if (subcommand === 'leave-message') {
+                    const message = interaction.options.getString('message');
+
+                    client.db.setGuildSetting(interaction.guild.id, 'leave_message', message);
+
+                    const embed = EmbedManager.createSuccessEmbed('Leave Message Updated', 
+                        message ? `Leave message set to:\n${message}` : 'Leave message reset to default.');
+
+                    await interaction.reply({ embeds: [embed] });
+
+                } else if (subcommand === 'embed-color') {
+                    const color = interaction.options.getString('color');
+
+                    if (!/^#[0-9A-F]{6}$/i.test(color)) {
+                        return interaction.reply({ 
+                            embeds: [EmbedManager.createErrorEmbed('Invalid Color', 'Please provide a valid hex color code (e.g., #7289DA).')], 
+                            ephemeral: true 
+                        });
+                    }
+
+                    client.db.setGuildSetting(interaction.guild.id, 'embed_color', color);
+
+                    const embed = EmbedManager.createEmbed('Embed Color Updated', 
+                        `Default embed color has been set to: ${color}`, color);
+
+                    await interaction.reply({ embeds: [embed] });
+
+                } else if (subcommand === 'automod') {
+                    const enabled = interaction.options.getBoolean('enabled');
+
+                    client.db.setGuildSetting(interaction.guild.id, 'automod_enabled', enabled ? 1 : 0);
+
+                    const embed = EmbedManager.createSuccessEmbed('Auto-Moderation Updated', 
+                        `Auto-moderation has been ${enabled ? 'enabled' : 'disabled'}.`);
+
+                    await interaction.reply({ embeds: [embed] });
                 }
+
             } catch (error) {
                 client.logger.error('Error in settings command:', error);
-                const errorEmbed = client.embeds.createError('Error', 'An error occurred while updating settings.');
-
-                if (interaction.deferred) {
-                    await interaction.editReply({ embeds: [errorEmbed], ephemeral: true });
-                } else {
-                    await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
-                }
+                await interaction.reply({ 
+                    embeds: [EmbedManager.createErrorEmbed('Error', 'An error occurred while updating settings.')], 
+                    ephemeral: true 
+                });
             }
         }
     },
 
     {
         name: 'backup',
-        description: 'Create or manage server data backups',
-        permissions: 'admin',
+        description: 'Create or restore server data backup',
+        permissions: ['admin'],
         data: new SlashCommandBuilder()
             .setName('backup')
-            .setDescription('Create or manage server data backups')
+            .setDescription('Create or restore server data backup')
             .addSubcommand(subcommand =>
                 subcommand
                     .setName('create')
@@ -155,500 +249,217 @@ const commands = [
             .addSubcommand(subcommand =>
                 subcommand
                     .setName('info')
-                    .setDescription('Show backup information and statistics')),
-
+                    .setDescription('Show backup information')),
         async execute(interaction, client) {
-            if (!await client.permissions.isAdmin(interaction.member)) {
-                return interaction.reply({
-                    embeds: [client.embeds.createError('Permission Denied', 'You need administrator permissions to use this command.')],
-                    ephemeral: true
+            if (!PermissionManager.isAdmin(interaction.member)) {
+                return interaction.reply({ 
+                    embeds: [EmbedManager.createErrorEmbed('Permission Denied', 'You need administrator permissions to use this command.')], 
+                    ephemeral: true 
                 });
             }
 
             const subcommand = interaction.options.getSubcommand();
 
             try {
-                switch (subcommand) {
-                    case 'create':
-                        await handleCreateBackup(interaction, client);
-                        break;
-                    case 'info':
-                        await handleBackupInfo(interaction, client);
-                        break;
+                if (subcommand === 'create') {
+                    await interaction.deferReply({ ephemeral: true });
+
+                    // Create database backup
+                    const backupPath = client.db.backup();
+
+                    // Create backup info
+                    const backupInfo = {
+                        guild_id: interaction.guild.id,
+                        guild_name: interaction.guild.name,
+                        created_at: new Date().toISOString(),
+                        created_by: interaction.user.tag,
+                        member_count: interaction.guild.memberCount,
+                        settings: client.db.getGuildSettings(interaction.guild.id),
+                        warnings_count: client.db.getWarnings(interaction.guild.id, '0').length, // Get all warnings
+                        self_roles_count: client.db.getSelfRoles(interaction.guild.id).length
+                    };
+
+                    // Create backup file with info
+                    const backupData = JSON.stringify(backupInfo, null, 2);
+                    const infoPath = backupPath.replace('.db', '_info.json');
+                    fs.writeFileSync(infoPath, backupData);
+
+                    // Create attachment
+                    const attachment = new AttachmentBuilder(infoPath, { name: `backup_info_${Date.now()}.json` });
+
+                    const embed = EmbedManager.createSuccessEmbed('Backup Created', 
+                        `Database backup has been created successfully.\n\n**Backup includes:**\n• Guild settings\n• User warnings\n• Self-roles configuration\n• Moderation logs\n• Giveaway data\n\n**Backup Path:** \`${backupPath}\``);
+
+                    await interaction.editReply({ embeds: [embed], files: [attachment] });
+
+                    // Clean up info file
+                    fs.unlinkSync(infoPath);
+
+                } else if (subcommand === 'info') {
+                    const settings = client.db.getGuildSettings(interaction.guild.id) || {};
+                    const warnings = client.db.getWarnings(interaction.guild.id, '0'); // Get all warnings
+                    const selfRoles = client.db.getSelfRoles(interaction.guild.id);
+                    const modLogs = client.db.getModLogs(interaction.guild.id, 100);
+
+                    const embed = EmbedManager.createEmbed('📊 Backup Information', 
+                        'Current server data that would be included in a backup')
+                        .addFields([
+                            { name: 'Settings Configured', value: Object.keys(settings).length.toString(), inline: true },
+                            { name: 'Total Warnings', value: warnings.length.toString(), inline: true },
+                            { name: 'Self-Roles', value: selfRoles.length.toString(), inline: true },
+                            { name: 'Moderation Logs', value: modLogs.length.toString(), inline: true },
+                            { name: 'Last Backup', value: 'Use `/backup create` to create one', inline: false }
+                        ]);
+
+                    await interaction.reply({ embeds: [embed], ephemeral: true });
                 }
+
             } catch (error) {
                 client.logger.error('Error in backup command:', error);
-                const errorEmbed = client.embeds.createError('Error', 'An error occurred while managing backup.');
 
                 if (interaction.deferred) {
-                    await interaction.editReply({ embeds: [errorEmbed], ephemeral: true });
+                    await interaction.editReply({ 
+                        embeds: [EmbedManager.createErrorEmbed('Error', 'An error occurred while managing backup.')], 
+                    });
                 } else {
-                    await interaction.reply({ embeds: [errorEmbed], ephemeral: true });
+                    await interaction.reply({ 
+                        embeds: [EmbedManager.createErrorEmbed('Error', 'An error occurred while managing backup.')], 
+                        ephemeral: true 
+                    });
                 }
             }
         }
     },
 
     {
-        name: 'manage-command',
-        description: 'Enable or disable bot commands',
-        permissions: 'admin',
+        name: 'logs',
+        description: 'View moderation logs',
+        permissions: ['moderator'],
         data: new SlashCommandBuilder()
-            .setName('manage-command')
-            .setDescription('Enable or disable bot commands')
+            .setName('logs')
+            .setDescription('View moderation logs')
             .addSubcommand(subcommand =>
                 subcommand
-                    .setName('disable')
-                    .setDescription('Disable a command')
-                    .addStringOption(option =>
-                        option
-                            .setName('command')
-                            .setDescription('Command name to disable')
-                            .setRequired(true)
-                            .setAutocomplete(true))
-                    .addStringOption(option =>
-                        option
-                            .setName('reason')
-                            .setDescription('Reason for disabling the command')
+                    .setName('recent')
+                    .setDescription('View recent moderation actions')
+                    .addIntegerOption(option =>
+                        option.setName('limit')
+                            .setDescription('Number of logs to show (1-50)')
+                            .setMinValue(1)
+                            .setMaxValue(50)
                             .setRequired(false)))
             .addSubcommand(subcommand =>
                 subcommand
-                    .setName('enable')
-                    .setDescription('Enable a previously disabled command')
-                    .addStringOption(option =>
-                        option
-                            .setName('command')
-                            .setDescription('Command name to enable')
-                            .setRequired(true)
-                            .setAutocomplete(true)))
+                    .setName('user')
+                    .setDescription('View logs for a specific user')
+                    .addUserOption(option =>
+                        option.setName('user')
+                            .setDescription('User to view logs for')
+                            .setRequired(true))
+                    .addIntegerOption(option =>
+                        option.setName('limit')
+                            .setDescription('Number of logs to show (1-25)')
+                            .setMinValue(1)
+                            .setMaxValue(25)
+                            .setRequired(false)))
             .addSubcommand(subcommand =>
                 subcommand
-                    .setName('list')
-                    .setDescription('List all disabled commands'))
-            .addSubcommand(subcommand =>
-                subcommand
-                    .setName('status')
-                    .setDescription('Check if a command is enabled or disabled')
-                    .addStringOption(option =>
-                        option
-                            .setName('command')
-                            .setDescription('Command name to check')
-                            .setRequired(true)
-                            .setAutocomplete(true))),
-
+                    .setName('cleanup')
+                    .setDescription('Clean up old logs (admin only)')),
         async execute(interaction, client) {
-            if (!await client.permissions.isAdmin(interaction.member)) {
-                return interaction.reply({
-                    embeds: [client.embeds.createError('Permission Denied', 'You need administrator permissions to use this command.')],
-                    ephemeral: true
+            if (!PermissionManager.isModerator(interaction.member)) {
+                return interaction.reply({ 
+                    embeds: [EmbedManager.createErrorEmbed('Permission Denied', 'You need moderator permissions to use this command.')], 
+                    ephemeral: true 
                 });
             }
 
             const subcommand = interaction.options.getSubcommand();
 
             try {
-                switch (subcommand) {
-                    case 'disable':
-                        await handleDisableCommand(interaction, client);
-                        break;
-                    case 'enable':
-                        await handleEnableCommand(interaction, client);
-                        break;
-                    case 'list':
-                        await handleListDisabled(interaction, client);
-                        break;
-                    case 'status':
-                        await handleCommandStatus(interaction, client);
-                        break;
-                }
-            } catch (error) {
-                client.logger.error('Error in manage-command:', error);
-                await interaction.reply({
-                    embeds: [client.embeds.createError('Error', 'An error occurred while managing the command.')],
-                    ephemeral: true
-                });
-            }
-        },
+                if (subcommand === 'recent') {
+                    const limit = interaction.options.getInteger('limit') || 10;
+                    const logs = client.db.getModLogs(interaction.guild.id, limit);
 
-        async autocomplete(interaction) {
-            const focusedOption = interaction.options.getFocused(true);
-            const subcommand = interaction.options.getSubcommand();
-
-            if (focusedOption.name === 'command') {
-                let choices = [];
-
-                try {
-                    if (subcommand === 'disable' || subcommand === 'status') {
-                        // Show all available commands except protected ones
-                        const protectedCommands = ['manage-command', 'help', 'settings'];
-                        choices = Array.from(interaction.client.commands.keys())
-                            .filter(cmd => !protectedCommands.includes(cmd))
-                            .filter(cmd => cmd.toLowerCase().includes(focusedOption.value.toLowerCase()))
-                            .slice(0, 25)
-                            .sort();
-                    } else if (subcommand === 'enable') {
-                        // Show only disabled commands
-                        const disabledCommands = await interaction.client.db.getDisabledCommands(interaction.guild.id);
-                        choices = disabledCommands
-                            .map(cmd => cmd.commandname)
-                            .filter(cmd => cmd.toLowerCase().includes(focusedOption.value.toLowerCase()))
-                            .slice(0, 25)
-                            .sort();
+                    if (logs.length === 0) {
+                        return interaction.reply({ 
+                            embeds: [EmbedManager.createEmbed('No Logs', 'No moderation logs found.')], 
+                            ephemeral: true 
+                        });
                     }
 
-                    await interaction.respond(
-                        choices.map(choice => ({ name: choice, value: choice }))
-                    );
-                } catch (error) {
-                    console.error('Error in manage-command autocomplete:', error);
-                    await interaction.respond([]);
+                    const embed = EmbedManager.createEmbed(`📋 Recent Moderation Logs`, 
+                        `Showing ${logs.length} recent moderation action(s)`);
+
+                    logs.forEach((log, index) => {
+                        const moderator = client.users.cache.get(log.moderator_id);
+                        const target = client.users.cache.get(log.target_user_id);
+                        const date = TimeParser.getDiscordTimestamp(log.created_at, 'R');
+
+                        embed.addFields([{
+                            name: `${index + 1}. ${log.action_type}`,
+                            value: `**Target:** ${target?.tag || 'Unknown User'}\n**Moderator:** ${moderator?.tag || 'Unknown'}\n**Reason:** ${log.reason || 'No reason'}\n**Date:** ${date}`,
+                            inline: false
+                        }]);
+                    });
+
+                    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+                } else if (subcommand === 'user') {
+                    const user = interaction.options.getUser('user');
+                    const limit = interaction.options.getInteger('limit') || 10;
+
+                    const allLogs = client.db.getModLogs(interaction.guild.id, 1000);
+                    const userLogs = allLogs.filter(log => log.target_user_id === user.id).slice(0, limit);
+
+                    if (userLogs.length === 0) {
+                        return interaction.reply({ 
+                            embeds: [EmbedManager.createEmbed('No Logs', `No moderation logs found for ${user.tag}.`)], 
+                            ephemeral: true 
+                        });
+                    }
+
+                    const embed = EmbedManager.createEmbed(`📋 Moderation Logs - ${user.tag}`, 
+                        `Showing ${userLogs.length} moderation action(s) for this user`);
+
+                    userLogs.forEach((log, index) => {
+                        const moderator = client.users.cache.get(log.moderator_id);
+                        const date = TimeParser.getDiscordTimestamp(log.created_at, 'R');
+
+                        embed.addFields([{
+                            name: `${index + 1}. ${log.action_type}`,
+                            value: `**Moderator:** ${moderator?.tag || 'Unknown'}\n**Reason:** ${log.reason || 'No reason'}\n**Date:** ${date}${log.duration ? `\n**Duration:** ${log.duration}` : ''}`,
+                            inline: false
+                        }]);
+                    });
+
+                    await interaction.reply({ embeds: [embed], ephemeral: true });
+
+                } else if (subcommand === 'cleanup') {
+                    if (!PermissionManager.isAdmin(interaction.member)) {
+                        return interaction.reply({ 
+                            embeds: [EmbedManager.createErrorEmbed('Permission Denied', 'You need administrator permissions to clean up logs.')], 
+                            ephemeral: true 
+                        });
+                    }
+
+                    client.db.cleanupOldData();
+
+                    const embed = EmbedManager.createSuccessEmbed('Logs Cleaned Up', 
+                        'Old moderation logs and expired warnings have been cleaned up.');
+
+                    await interaction.reply({ embeds: [embed], ephemeral: true });
                 }
+
+            } catch (error) {
+                client.logger.error('Error in logs command:', error);
+                await interaction.reply({ 
+                    embeds: [EmbedManager.createErrorEmbed('Error', 'An error occurred while fetching logs.')], 
+                    ephemeral: true 
+                });
             }
         }
     }
 ];
 
-// Helper functions for settings command
-async function handleViewSettings(interaction, client) {
-    const settings = await client.db.getGuildSettings(interaction.guild.id);
-
-    const logChannel = settings.logchannelid ? `<#${settings.logchannelid}>` : 'Not set';
-    const welcomeChannel = settings.welcomechannelid ? `<#${settings.welcomechannelid}>` : 'Not set';
-    const autoRole = settings.autoroleid ? `<@&${settings.autoroleid}>` : 'Not set';
-
-    const embed = client.embeds.createInfo('⚙️ Server Settings', 'Current server configuration')
-        .addFields(
-            { name: '📝 Prefix', value: settings.prefix || '!', inline: true },
-            { name: '📋 Log Channel', value: logChannel, inline: true },
-            { name: '👋 Welcome Channel', value: welcomeChannel, inline: true },
-            { name: '🎭 Auto Role', value: autoRole, inline: true },
-            { name: '🎨 Embed Color', value: `#${settings.embedcolor || '7289DA'}`, inline: true },
-            { name: '🛡️ Auto-Moderation', value: settings.automodenabled ? 'Enabled' : 'Disabled', inline: true },
-            { name: '💬 Welcome Message', value: settings.welcomemessage || 'Default message', inline: false },
-            { name: '👋 Leave Message', value: settings.leavemessage || 'Default message', inline: false }
-        );
-
-    await interaction.reply({ embeds: [embed], ephemeral: true });
-}
-
-async function handleSetPrefix(interaction, client) {
-    const newPrefix = interaction.options.getString('prefix');
-
-    if (newPrefix.length > 5) {
-        return interaction.reply({
-            embeds: [client.embeds.createError('Invalid Prefix', 'Prefix must be 5 characters or less.')],
-            ephemeral: true
-        });
-    }
-
-    await client.db.setGuildSetting(interaction.guild.id, 'prefix', newPrefix);
-
-    const embed = client.embeds.createSuccess('✅ Prefix Updated', `Command prefix has been set to \`${newPrefix}\``);
-    await interaction.reply({ embeds: [embed] });
-}
-
-async function handleLogChannel(interaction, client) {
-    const channel = interaction.options.getChannel('channel');
-
-    if (channel) {
-        // Check bot permissions
-        if (!await client.permissions.botHasPermissions(channel, ['SendMessages', 'EmbedLinks'])) {
-            return interaction.reply({
-                embeds: [client.embeds.createError('Missing Permissions', 'I need Send Messages and Embed Links permissions in that channel.')],
-                ephemeral: true
-            });
-        }
-
-        await client.db.setGuildSetting(interaction.guild.id, 'logchannelid', channel.id);
-
-        const embed = client.embeds.createSuccess('📋 Log Channel Set', `Moderation logs will now be sent to ${channel}.`);
-        await interaction.reply({ embeds: [embed] });
-    } else {
-        await client.db.setGuildSetting(interaction.guild.id, 'logchannelid', null);
-
-        const embed = client.embeds.createSuccess('📋 Log Channel Removed', 'Moderation logging has been disabled.');
-        await interaction.reply({ embeds: [embed] });
-    }
-}
-
-async function handleWelcomeChannel(interaction, client) {
-    const channel = interaction.options.getChannel('channel');
-
-    if (channel) {
-        if (!await client.permissions.botHasPermissions(channel, ['SendMessages', 'EmbedLinks'])) {
-            return interaction.reply({
-                embeds: [client.embeds.createError('Missing Permissions', 'I need Send Messages and Embed Links permissions in that channel.')],
-                ephemeral: true
-            });
-        }
-
-        await client.db.setGuildSetting(interaction.guild.id, 'welcomechannelid', channel.id);
-
-        const embed = client.embeds.createSuccess('👋 Welcome Channel Set', `Welcome and leave messages will now be sent to ${channel}.`);
-        await interaction.reply({ embeds: [embed] });
-    } else {
-        await client.db.setGuildSetting(interaction.guild.id, 'welcomechannelid', null);
-
-        const embed = client.embeds.createSuccess('👋 Welcome Channel Removed', 'Welcome and leave messages have been disabled.');
-        await interaction.reply({ embeds: [embed] });
-    }
-}
-
-async function handleWelcomeMessage(interaction, client) {
-    const message = interaction.options.getString('message');
-
-    await client.db.setGuildSetting(interaction.guild.id, 'welcomemessage', message);
-
-    const embed = client.embeds.createSuccess(
-        '💬 Welcome Message Updated', 
-        message ? `Welcome message set to: ${message}` : 'Welcome message reset to default.'
-    );
-    await interaction.reply({ embeds: [embed] });
-}
-
-async function handleLeaveMessage(interaction, client) {
-    const message = interaction.options.getString('message');
-
-    await client.db.setGuildSetting(interaction.guild.id, 'leavemessage', message);
-
-    const embed = client.embeds.createSuccess(
-        '👋 Leave Message Updated', 
-        message ? `Leave message set to: ${message}` : 'Leave message reset to default.'
-    );
-    await interaction.reply({ embeds: [embed] });
-}
-
-async function handleEmbedColor(interaction, client) {
-    const color = interaction.options.getString('color');
-
-    // Validate hex color
-    if (!/^[0-9A-F]{6}$/i.test(color)) {
-        return interaction.reply({
-            embeds: [client.embeds.createError('Invalid Color', 'Please provide a valid hex color code (e.g., 7289DA).')],
-            ephemeral: true
-        });
-    }
-
-    await client.db.setGuildSetting(interaction.guild.id, 'embedcolor', color);
-
-    const embed = client.embeds.createCustom('🎨 Embed Color Updated', `Default embed color has been set to #${color}`, `#${color}`);
-    await interaction.reply({ embeds: [embed] });
-}
-
-async function handleAutomod(interaction, client) {
-    const enabled = interaction.options.getBoolean('enabled');
-
-    await client.db.setGuildSetting(interaction.guild.id, 'automodenabled', enabled ? 1 : 0);
-
-    const embed = client.embeds.createSuccess('🛡️ Auto-Moderation Updated', `Auto-moderation has been ${enabled ? 'enabled' : 'disabled'}.`);
-    await interaction.reply({ embeds: [embed] });
-}
-
-// Helper functions for backup command
-async function handleCreateBackup(interaction, client) {
-    await interaction.deferReply({ ephemeral: true });
-
-    // Create database backup
-    const backupPath = await client.db.createBackup();
-
-    // Create backup info
-    const backupInfo = {
-        guildid: interaction.guild.id,
-        guildname: interaction.guild.name,
-        createdat: new Date().toISOString(),
-        createdby: interaction.user.tag,
-        membercount: interaction.guild.memberCount,
-        settings: await client.db.getGuildSettings(interaction.guild.id),
-        warningscount: (await client.db.getWarnings(interaction.guild.id, 0)).length,
-        selfrolescount: (await client.db.getSelfRoles(interaction.guild.id)).length
-    };
-
-    // Create info file
-    const fs = require('fs');
-    const infoPath = backupPath.replace('.db', '_info.json');
-    fs.writeFileSync(infoPath, JSON.stringify(backupInfo, null, 2));
-
-    // Create attachment
-    const attachment = new AttachmentBuilder(infoPath, { name: `backup_info_${Date.now()}.json` });
-
-    const embed = client.embeds.createSuccess('💾 Backup Created', 'Database backup has been created successfully.')
-        .addFields(
-            { name: '📊 Guild', value: interaction.guild.name, inline: true },
-            { name: '👥 Members', value: backupInfo.membercount.toString(), inline: true },
-            { name: '📅 Created', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-        );
-
-    await interaction.editReply({ embeds: [embed], files: [attachment] });
-
-    // Cleanup
-    fs.unlinkSync(infoPath);
-}
-
-async function handleBackupInfo(interaction, client) {
-    const settings = await client.db.getGuildSettings(interaction.guild.id);
-    const warnings = await client.db.getWarnings(interaction.guild.id, 0);
-    const selfRoles = await client.db.getSelfRoles(interaction.guild.id);
-    const modLogs = await client.db.getModLogs(interaction.guild.id, 100);
-
-    const embed = client.embeds.createInfo('ℹ️ Backup Information', 'Current server data that would be included in a backup')
-        .addFields(
-            { name: '⚙️ Settings Configured', value: Object.keys(settings).length.toString(), inline: true },
-            { name: '⚠️ Total Warnings', value: warnings.length.toString(), inline: true },
-            { name: '🎭 Self-Roles', value: selfRoles.length.toString(), inline: true },
-            { name: '📋 Moderation Logs', value: modLogs.length.toString(), inline: true },
-            { name: '💾 Last Backup', value: 'Use `/backup create` to create one', inline: false }
-        );
-
-    await interaction.reply({ embeds: [embed], ephemeral: true });
-}
-
-// Helper functions for manage-command
-async function handleDisableCommand(interaction, client) {
-    const commandName = interaction.options.getString('command');
-    const reason = interaction.options.getString('reason') || 'No reason provided';
-
-    // Prevent disabling critical commands
-    const protectedCommands = ['manage-command', 'help', 'settings'];
-    if (protectedCommands.includes(commandName)) {
-        return interaction.reply({
-            embeds: [client.embeds.createError('Cannot Disable', `The command \`${commandName}\` cannot be disabled as it's protected.`)],
-            ephemeral: true
-        });
-    }
-
-    // Check if command exists
-    const command = client.commands.get(commandName);
-    if (!command) {
-        return interaction.reply({
-            embeds: [client.embeds.createError('Command Not Found', `No command found with the name \`${commandName}\`.`)],
-            ephemeral: true
-        });
-    }
-
-    // Check if already disabled
-    const existing = await client.db.getDisabledCommand(interaction.guild.id, commandName);
-    if (existing) {
-        return interaction.reply({
-            embeds: [client.embeds.createError('Already Disabled', `Command \`${commandName}\` is already disabled.`)],
-            ephemeral: true
-        });
-    }
-
-    // Disable the command
-    await client.db.disableCommand(interaction.guild.id, commandName, interaction.user.id, reason);
-
-    const embed = client.embeds.createSuccess('🚫 Command Disabled', `Successfully disabled command \`${commandName}\`.`)
-        .addFields(
-            { name: '📝 Reason', value: reason, inline: false },
-            { name: '👤 Disabled By', value: interaction.user.tag, inline: true },
-            { name: '📅 Date', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-        );
-
-    await interaction.reply({ embeds: [embed] });
-
-    // Log the action
-    await client.db.addModLog(interaction.guild.id, 'Command Disabled', 'N/A', interaction.user.id, `Disabled command: ${commandName} - Reason: ${reason}`);
-}
-
-async function handleEnableCommand(interaction, client) {
-    const commandName = interaction.options.getString('command');
-
-    // Check if command is disabled
-    const disabled = await client.db.getDisabledCommand(interaction.guild.id, commandName);
-    if (!disabled) {
-        return interaction.reply({
-            embeds: [client.embeds.createError('Not Disabled', `Command \`${commandName}\` is not disabled.`)],
-            ephemeral: true
-        });
-    }
-
-    // Enable the command
-    await client.db.enableCommand(interaction.guild.id, commandName);
-
-    const embed = client.embeds.createSuccess('✅ Command Enabled', `Successfully enabled command \`${commandName}\`.`)
-        .addFields(
-            { name: '👤 Previously Disabled By', value: disabled.disabledby, inline: true },
-            { name: '📝 Original Reason', value: disabled.reason || 'No reason provided', inline: false },
-            { name: '👤 Enabled By', value: interaction.user.tag, inline: true },
-            { name: '📅 Date', value: `<t:${Math.floor(Date.now() / 1000)}:F>`, inline: true }
-        );
-
-    await interaction.reply({ embeds: [embed] });
-
-    // Log the action
-    await client.db.addModLog(interaction.guild.id, 'Command Enabled', 'N/A', interaction.user.id, `Enabled command: ${commandName}`);
-}
-
-async function handleListDisabled(interaction, client) {
-    const disabledCommands = await client.db.getDisabledCommands(interaction.guild.id);
-
-    if (disabledCommands.length === 0) {
-        return interaction.reply({
-            embeds: [client.embeds.createInfo('📋 Disabled Commands', 'No commands are currently disabled.')],
-            ephemeral: true
-        });
-    }
-
-    const commandList = disabledCommands.map((cmd, index) => {
-        const disabledDate = new Date(cmd.createdat).getTime();
-        return `${index + 1}. **${cmd.commandname}**\n` +
-               `📝 Reason: ${cmd.reason || 'No reason provided'}\n` +
-               `👤 By: ${cmd.disabledby}\n` +
-               `📅 <t:${Math.floor(disabledDate / 1000)}:R>`;
-    }).join('\n\n');
-
-    const embed = client.embeds.createInfo('🚫 Disabled Commands', `Found ${disabledCommands.length} disabled command(s)`)
-        .setColor('#FFA500');
-
-    // Handle long lists
-    if (commandList.length > 4096) {
-        embed.setDescription(commandList.substring(0, 4000) + '\n\n...(truncated)');
-        embed.setFooter({ text: 'List truncated due to length. Use individual status checks for full details.' });
-    } else {
-        embed.setDescription(commandList);
-    }
-
-    await interaction.reply({ embeds: [embed], ephemeral: true });
-}
-
-async function handleCommandStatus(interaction, client) {
-    const commandName = interaction.options.getString('command');
-
-    // Check if command exists
-    const command = client.commands.get(commandName);
-    if (!command) {
-        return interaction.reply({
-            embeds: [client.embeds.createError('Command Not Found', `No command found with the name \`${commandName}\`.`)],
-            ephemeral: true
-        });
-    }
-
-    const disabled = await client.db.getDisabledCommand(interaction.guild.id, commandName);
-
-    if (disabled) {
-        const disabledDate = new Date(disabled.createdat).getTime();
-        const embed = client.embeds.createInfo('🚫 Command Status', `Command \`${commandName}\` is **DISABLED**`)
-            .setColor('#FF0000')
-            .addFields(
-                { name: '📝 Reason', value: disabled.reason || 'No reason provided', inline: false },
-                { name: '👤 Disabled By', value: disabled.disabledby, inline: true },
-                { name: '📅 Date', value: `<t:${Math.floor(disabledDate / 1000)}:F>`, inline: true },
-                { name: '⏰ Duration', value: `<t:${Math.floor(disabledDate / 1000)}:R>`, inline: true }
-            );
-
-        await interaction.reply({ embeds: [embed], ephemeral: true });
-    } else {
-        const embed = client.embeds.createInfo('✅ Command Status', `Command \`${commandName}\` is **ENABLED**`)
-            .setColor('#00FF00')
-            .addFields(
-                { name: '🔒 Permissions', value: command.permissions ? command.permissions.charAt(0).toUpperCase() + command.permissions.slice(1) : 'None', inline: true },
-                { name: '📝 Description', value: command.description || 'No description available', inline: false }
-            );
-
-        await interaction.reply({ embeds: [embed], ephemeral: true });
-    }
-}
-
-module.exports = {
-    commands
-};
+module.exports = { commands };
