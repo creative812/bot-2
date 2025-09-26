@@ -793,7 +793,7 @@ async function handleTicketStaffRoleSelection(interaction, client) {
             });
         }
 
-        // Update settings with selected staff roles
+        // Update settings with selected staff roles using the correct database method
         client.db.setTicketSettings(
             panelData.guildId,
             settings.categoryid,
